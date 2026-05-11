@@ -6,7 +6,7 @@
 				<Button
 					icon="help-circle"
 					variant="ghost"
-					:link="'https://docs.frappe.io/cloud/server-analytics#load-average'"
+					:link="'https://docs.frappe.io/cloud/servers/guidelines-for-choosing-a-server-plan#load-average'"
 				/>
 				<router-link
 					class="text-base text-gray-600 hover:text-gray-700"
@@ -17,7 +17,7 @@
 			</div>
 		</div>
 		<LineChart
-			class="h-52 p-2"
+			class="h-[15.5rem] p-2"
 			type="time"
 			title="Load Average"
 			:key="loadAverageData"
@@ -44,13 +44,16 @@ export default {
 	resources: {
 		loadavg() {
 			let localTimezone = dayjs.tz.guess();
+			const end = dayjs();
+			const start = end.subtract(6, 'hour');
 			return {
 				url: 'press.api.server.analytics',
 				params: {
 					name: this.server,
 					timezone: localTimezone,
 					query: 'loadavg',
-					duration: '6h',
+					start: start.toISOString(),
+					end: end.toISOString(),
 				},
 				auto: true,
 			};
