@@ -40,6 +40,31 @@
 			/>
 			<div class="flex items-center justify-between text-base text-gray-900">
 				<div class="flex flex-col gap-1.5">
+					<div class="font-medium">Billing address</div>
+					<div v-if="billingDetailsSummary" class="leading-5 text-gray-700">
+						{{ billingDetailsSummary }}
+					</div>
+					<div v-else class="text-gray-700">No address</div>
+				</div>
+				<div class="shrink-0">
+					<Button
+						:label="billingDetailsSummary ? 'Edit ' : 'Add billing address'"
+						@click="
+							() => {
+								showMessage = false;
+								showBillingDetailsDialog = true;
+							}
+						"
+					>
+						<template v-if="!billingDetailsSummary" #prefix>
+							<FeatherIcon class="h-4" name="plus" />
+						</template>
+					</Button>
+				</div>
+			</div>
+			<div class="my-3 h-px bg-gray-100" />
+			<div class="flex items-center justify-between text-base text-gray-900">
+				<div class="flex flex-col gap-1.5">
 					<div class="font-medium">Mode of payment</div>
 					<div
 						v-if="team.doc.payment_mode"
@@ -91,31 +116,6 @@
 						"
 					>
 						<template #prefix>
-							<FeatherIcon class="h-4" name="plus" />
-						</template>
-					</Button>
-				</div>
-			</div>
-			<div class="my-3 h-px bg-gray-100" />
-			<div class="flex items-center justify-between text-base text-gray-900">
-				<div class="flex flex-col gap-1.5">
-					<div class="font-medium">Billing address</div>
-					<div v-if="billingDetailsSummary" class="leading-5 text-gray-700">
-						{{ billingDetailsSummary }}
-					</div>
-					<div v-else class="text-gray-700">No address</div>
-				</div>
-				<div class="shrink-0">
-					<Button
-						:label="billingDetailsSummary ? 'Edit ' : 'Add billing address'"
-						@click="
-							() => {
-								showMessage = false;
-								showBillingDetailsDialog = true;
-							}
-						"
-					>
-						<template v-if="!billingDetailsSummary" #prefix>
 							<FeatherIcon class="h-4" name="plus" />
 						</template>
 					</Button>
@@ -204,7 +204,6 @@ import {
 } from '../../utils/components';
 import { computed, ref, inject, h, defineAsyncComponent } from 'vue';
 import router from '../../router';
-import { switchToTeam } from '../../data/team';
 
 const team = inject('team');
 const {
@@ -301,6 +300,18 @@ const paymentModeOptions = [
 			}),
 	},
 	{
+		label: 'UPI Autopay',
+		value: 'UPI Autopay',
+		condition: () => team.doc.currency === 'INR',
+		description: 'Your UPI will be auto-debited for monthly subscription',
+		component: () =>
+			h(DropdownItem, {
+				label: 'UPI Autopay',
+				active: team.doc.payment_mode === 'UPI Autopay',
+				onClick: () => updatePaymentMode('UPI Autopay'),
+			}),
+	},
+	{
 		component: () =>
 			h('div', [
 				h('div', { class: 'border-t border-gray-200 my-1' }),
@@ -387,6 +398,14 @@ function updatePaymentMode(mode) {
 			() => import('./FinalizeInvoicesDialog.vue'),
 		);
 		renderDialog(h(finalizeInvoicesDialog));
+		return;
+	}
+	if (mode === 'UPI Autopay') {
+		if (team.doc.default_razorpay_mandate) {
+			if (!changePaymentMode.loading) changePaymentMode.submit({ mode });
+		} else {
+			router.push({ name: 'BillingUPIAutopay' });
+		}
 		return;
 	}
 	if (!changePaymentMode.loading) changePaymentMode.submit({ mode });
