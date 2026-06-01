@@ -16,12 +16,12 @@
 			variant="solid"
 			icon-left="github"
 			label="Connect To GitHub"
-			:link="options.installation_url + '?state=' + state"
+			:link="installationLink"
 		/>
 	</div>
 	<div v-else class="space-y-4">
 		<FormControl
-			type="autocomplete"
+			type="combobox"
 			label="Choose GitHub User / Organization"
 			:options="
 				options.installations.map((i) => ({
@@ -30,7 +30,14 @@
 					image: i.image,
 				}))
 			"
-			v-model="selectedGithubUser"
+			:modelValue="selectedGithubUser?.value"
+			@update:modelValue="
+				(optionValue) => {
+					selectedGithubUser = options.installations.find(
+						(option) => String(option.id) === optionValue,
+					);
+				}
+			"
 		>
 			<template #prefix>
 				<img
@@ -51,15 +58,12 @@
 		</FormControl>
 		<span class="text-sm text-gray-600">
 			Don't see your organization?
-			<Link
-				:href="options.installation_url + '?state=' + state"
-				class="font-medium"
-			>
+			<Link :href="installationLink" class="font-medium">
 				Add from GitHub
 			</Link>
 		</span>
 		<FormControl
-			type="autocomplete"
+			type="combobox"
 			v-if="selectedGithubUserData"
 			label="Choose GitHub Repository"
 			:options="
@@ -68,7 +72,14 @@
 					value: r.name,
 				}))
 			"
-			v-model="selectedGithubRepository"
+			:modelValue="selectedGithubRepository?.value"
+			@update:modelValue="
+				(optionValue) => {
+					selectedGithubRepository = (selectedGithubUserData.repos || []).find(
+						(option) => option.name === optionValue,
+					);
+				}
+			"
 		>
 			<template #prefix>
 				<FeatherIcon name="book" class="mr-2 h-4 w-4" />
@@ -87,27 +98,36 @@
 				Add from GitHub
 			</Link>
 		</p>
-		<FormControl
-			v-if="selectedGithubRepository"
-			type="autocomplete"
-			label="Choose Branch"
-			:options="branchOptions"
-			v-model="selectedBranch"
-		>
-			<template #prefix>
-				<FeatherIcon name="git-branch" class="mr-2 h-4 w-4" />
-			</template>
-		</FormControl>
+
+		<div v-if="selectedGithubRepository" class="space-y-1.5">
+			<div class="text-xs text-ink-gray-5">Choose Branch</div>
+			<Combobox
+				v-if="selectedGithubRepository"
+				allow-custom-value
+				:options="branchOptions"
+				:modelValue="selectedBranch?.value"
+				@update:modelValue="onChangeBranchDebounce"
+			>
+				<template #prefix>
+					<FeatherIcon name="git-branch" class="mr-2 h-4 w-4" />
+				</template>
+			</Combobox>
+		</div>
 	</div>
 </template>
 
 <script>
+import { Combobox, debounce } from 'frappe-ui';
+
 export default {
+	components: {
+		Combobox,
+	},
 	emits: ['validateApp', 'fieldChange'],
 	data() {
 		return {
 			app: {},
-			selectedBranch: '',
+			selectedBranch: null,
 			selectedGithubUser: null,
 			selectedGithubRepository: null,
 		};
@@ -117,21 +137,21 @@ export default {
 			this.selectedBranch = '';
 			this.$emit('fieldChange');
 		},
-		selectedGithubRepository(val) {
-			if (!val) {
+		selectedGithubRepository(repo) {
+			if (!repo) {
 				this.selectedBranch = '';
 				return;
 			}
 			this.$emit('fieldChange');
 			this.$resources.branches.submit({
-				owner: this.selectedGithubUser?.label,
-				name: val?.label,
-				installation: this.selectedGithubUser?.value,
+				owner: this.selectedGithubUser?.login,
+				name: repo?.name,
+				installation: this.selectedGithubUser?.id,
 			});
 
 			if (this.selectedGithubUserData) {
 				let defaultBranch = this.selectedGithubUserData.repos.find(
-					(r) => r.name === val.label,
+					(r) => r.name === repo.name,
 				).default_branch;
 				this.selectedBranch = { label: defaultBranch, value: defaultBranch };
 			} else this.selectedBranch = '';
@@ -150,6 +170,11 @@ export default {
 		options() {
 			return {
 				url: 'press.api.github.options',
+				makeParams() {
+					return {
+						redirect_url: window.location.href,
+					};
+				},
 				auto: true,
 			};
 		},
@@ -161,21 +186,38 @@ export default {
 		clearAccessToken() {
 			return {
 				url: 'press.api.github.clear_token_and_get_installation_url',
-				onSuccess(installation_url) {
-					window.location.href = installation_url + '?state=' + this.state;
+				makeParams() {
+					return {
+						redirect_url: window.location.href,
+					};
+				},
+				onSuccess(installationData) {
+					window.location.href = this.getInstallationLink(installationData);
 				},
 			};
+		},
+	},
+	methods: {
+		getInstallationLink(installationData) {
+			if (!installationData?.installation_url || !installationData?.state) {
+				return null;
+			}
+
+			return `${installationData.installation_url}?state=${installationData.state}`;
 		},
 	},
 	computed: {
 		options() {
 			return this.$resources.options.data;
 		},
+		installationLink() {
+			return this.getInstallationLink(this.options);
+		},
 		appOwner() {
-			return this.selectedGithubUser?.label;
+			return this.selectedGithubUser?.login;
 		},
 		appName() {
-			return this.selectedGithubRepository?.label;
+			return this.selectedGithubRepository?.name;
 		},
 		branchOptions() {
 			return (this.$resources.branches.data || []).map((branch) => ({
@@ -186,7 +228,7 @@ export default {
 		selectedGithubUserData() {
 			if (!this.selectedGithubUser) return null;
 			return this.options.installations.find(
-				(i) => i.id === Number(this.selectedGithubUser.value),
+				(i) => i.id === Number(this.selectedGithubUser.id),
 			);
 		},
 		needsAuthorization() {
@@ -198,15 +240,15 @@ export default {
 			);
 		},
 		requiresReAuth() {
-			return this.$resources.options?.error?.messages.includes(
-				'Bad credentials',
+			return this.$resources.options?.error?.messages.some((msg) =>
+				msg.includes('Bad credentials'),
 			);
 		},
-		state() {
-			let location = window.location.href;
-			let state = { team: this.$team.name, url: location };
-			return btoa(JSON.stringify(state));
-		},
+	},
+	created() {
+		this.onChangeBranchDebounce = debounce((val) => {
+			this.selectedBranch = { label: val, value: val };
+		}, 500);
 	},
 };
 </script>
