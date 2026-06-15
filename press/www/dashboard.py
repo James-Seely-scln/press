@@ -4,7 +4,11 @@
 
 import frappe
 
-from press.utils import get_default_team_for_user, get_valid_teams_for_user
+from press.utils import (
+	chat_enabled,
+	get_default_team_for_user,
+	get_valid_teams_for_user,
+)
 
 base_template_path = "templates/www/dashboard.html"
 no_cache = 1
@@ -33,7 +37,6 @@ def get_context_for_dev():
 def get_boot():
 	return frappe._dict(
 		frappe_version=frappe.__version__,
-		press_frontend_sentry_dsn=frappe.conf.press_frontend_sentry_dsn or "",
 		press_dashboard_sentry_dsn=frappe.conf.press_dashboard_sentry_dsn or "",
 		press_frontend_posthog_host=frappe.conf.posthog_host or "",
 		press_frontend_posthog_project_id=frappe.conf.posthog_project_id or "",
@@ -41,6 +44,7 @@ def get_boot():
 		site_name=frappe.local.site,
 		default_team=get_default_team_for_user(frappe.session.user),
 		valid_teams=get_valid_teams_for_user(frappe.session.user),
+		chat_enabled=chat_enabled(),
 		is_system_user=frappe.session.data.user_type == "System User",
 		verify_cards_with_micro_charge=frappe.db.get_single_value(
 			"Press Settings", "verify_cards_with_micro_charge"
@@ -49,8 +53,19 @@ def get_boot():
 			frappe.db.get_values(
 				"Press Settings",
 				"Press Settings",
-				["free_credits_inr", "free_credits_usd"],
+				[
+					"free_credits_inr",
+					"free_credits_usd",
+					"chat_base_url",
+					"chat_website_token",
+					"chat_support_start_time",
+					"chat_support_end_time",
+				],
 				as_dict=True,
 			)[0]
 		),
+		user_details={
+			"email": frappe.session.user,
+			"name": frappe.db.get_value("User", frappe.session.user, "first_name", cache=True) or "",
+		},
 	)
