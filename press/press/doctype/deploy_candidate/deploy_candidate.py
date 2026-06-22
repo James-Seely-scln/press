@@ -31,6 +31,7 @@ from press.press.doctype.deploy_candidate.utils import (
 	PackageManagerFiles,
 	is_suspended,
 )
+from press.press.doctype.release_group.release_group import DEFAULT_DEPENDENCIES
 from press.utils import log_error
 
 # build_duration, pending_duration are Time fields, >= 1 day is invalid
@@ -67,6 +68,7 @@ class DeployCandidate(Document):
 
 		apps: DF.Table[DeployCandidateApp]
 		arm_build: DF.Link | None
+		build_token: DF.Data | None
 		compress_app_cache: DF.Check
 		dependencies: DF.Table[DeployCandidateDependency]
 		environment_variables: DF.Table[DeployCandidateVariable]
@@ -240,9 +242,13 @@ class DeployCandidate(Document):
 		run_now: bool = True,
 		scheduled_time: datetime | None = None,
 		retry_count: int = 0,
+		ignore_permissions: bool = False,
 	):
 		if run_now and not is_suspended():
-			return {"error": False, "name": self.build_and_deploy()}
+			return {
+				"error": False,
+				"name": self.build_and_deploy(ignore_permissions=ignore_permissions),
+			}
 
 		deploy_candidate_build = self.create_build(
 			no_cache=False,
@@ -251,12 +257,12 @@ class DeployCandidate(Document):
 			scheduled_time=scheduled_time or now(),
 			retry_count=retry_count,
 		)
-		deploy_candidate_build.insert()
+		deploy_candidate_build.insert(ignore_permissions=ignore_permissions)
 		return {"error": False, "name": deploy_candidate_build.name}
 
-	def build_and_deploy(self, no_cache: bool = False) -> str:
+	def build_and_deploy(self, no_cache: bool = False, ignore_permissions: bool = False) -> str:
 		deploy_candidate_build = self.create_build(no_cache=no_cache, deploy_after_build=True)
-		deploy_candidate_build.insert()
+		deploy_candidate_build.insert(ignore_permissions=ignore_permissions)
 		return deploy_candidate_build.name
 
 	def _set_app_cached_flags(self) -> None:
@@ -409,7 +415,7 @@ class DeployCandidate(Document):
 	def __prepare_chunks(self, packages: list[str]):
 		"""Chunk packages into groups of 140 characters"""
 		# Start with one empty chunk
-		chunks = [[]]
+		chunks: list[list[str]] = [[]]
 		for package in packages:
 			# Appending the package to the last chunk will keep it under 140
 			# Append package to last chunk
@@ -469,7 +475,11 @@ class DeployCandidate(Document):
 		if dependency.islower():
 			dependency = dependency.upper() + "_VERSION"
 
-		version = find(self.dependencies, lambda x: x.dependency == dependency).version
+		dependency_record = find(self.dependencies, lambda x: x.dependency == dependency)
+		if not dependency_record:
+			version = find(DEFAULT_DEPENDENCIES, lambda x: x["dependency"] == dependency)["version"]
+		else:
+			version = dependency_record.version
 
 		if as_env:
 			return f"{dependency} {version}"
@@ -605,9 +615,7 @@ class DeployCandidate(Document):
 			},
 		)
 		if site_group_deploy:
-			frappe.get_doc("Site Group Deploy", site_group_deploy).update_site_group_deploy_on_deploy_failure(
-				self,
-			)
+			frappe.db.set_value("Site Group Deploy", site_group_deploy, "status", "Bench Deploy Failed")
 
 
 def can_pull_update(file_paths: list[str]) -> bool:
@@ -721,7 +729,8 @@ def get_build_stage_and_step(
 	stage = STAGE_SLUG_MAP.get(stage_slug, stage_slug)
 	step = step_slug
 	if stage_slug == "clone" or stage_slug == "apps":
-		step = app_titles.get(step_slug, step_slug)
+		if app_titles:
+			step = app_titles.get(step_slug, step_slug)
 	else:
 		step = STEP_SLUG_MAP.get((stage_slug, step_slug), step_slug)
 	return (stage, step)

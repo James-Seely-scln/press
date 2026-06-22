@@ -15,8 +15,10 @@
   "route",
   "published_on",
   "section_break_7",
+  "column_break_ccyg",
   "frappe_approved",
   "subscription_type",
+  "bypass_automated_audit",
   "column_break_10",
   "categories",
   "published",
@@ -57,9 +59,6 @@
   "after_uninstall_script",
   "review_tab",
   "status",
-  "column_break_bcjk",
-  "stop_auto_review",
-  "review_stage",
   "dashboard_tab",
   "onboarding_related_section",
   "show_for_site_creation",
@@ -329,24 +328,10 @@
    "label": "Review"
   },
   {
-   "default": "Not Started",
-   "fieldname": "review_stage",
-   "fieldtype": "Select",
-   "in_list_view": 1,
-   "label": "Review Stage",
-   "options": "Not Started\nDescription Missing\nLogo Missing\nApp Release Not Reviewed\nReady for Review\nReady to Publish\nRejected"
-  },
-  {
    "default": "0",
    "fieldname": "frappe_approved",
    "fieldtype": "Check",
    "label": "Frappe Approved"
-  },
-  {
-   "default": "0",
-   "fieldname": "stop_auto_review",
-   "fieldtype": "Check",
-   "label": "Stop Auto Review"
   },
   {
    "description": "This keys are added to site config on saas signup",
@@ -406,13 +391,20 @@
    "label": "Collect Feedback"
   },
   {
-   "fieldname": "column_break_bcjk",
-   "fieldtype": "Column Break"
-  },
-  {
    "fieldname": "published_on",
    "fieldtype": "Date",
    "label": "Published On"
+  },
+  {
+   "fieldname": "column_break_ccyg",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "0",
+   "description": "This bypasses the Marketplace Automated Audit Checks. Only suggested to be checked for Frappe apps.",
+   "fieldname": "bypass_automated_audit",
+   "fieldtype": "Check",
+   "label": "Bypass Automated Audit"
   }
  ],
  "grid_page_length": 50,
@@ -435,9 +427,14 @@
    "group": "App Subscription",
    "link_doctype": "Marketplace App Subscription",
    "link_fieldname": "app"
+  },
+  {
+   "group": "General",
+   "link_doctype": "Marketplace App Audit",
+   "link_fieldname": "marketplace_app"
   }
  ],
- "modified": "2025-09-30 11:48:31.952469",
+ "modified": "2026-04-16 12:40:05.646198",
  "modified_by": "Administrator",
  "module": "Press",
  "name": "Marketplace App",
