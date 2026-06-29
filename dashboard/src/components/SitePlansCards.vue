@@ -12,9 +12,11 @@ export default {
 		'modelValue',
 		'isPrivateBenchSite',
 		'isDedicatedServerSite',
+		'serverPlanPrice',
 		'selectedCluster',
 		'selectedApps',
 		'selectedVersion',
+		'selectedProvider',
 		'hideRestrictedPlans',
 	],
 	emits: ['update:modelValue'],
@@ -36,8 +38,13 @@ export default {
 			if (this.isPrivateBenchSite) {
 				plans = plans.filter((plan) => plan.private_benches);
 			}
-			if (this.isPrivateBenchSite && this.isDedicatedServerSite) {
-				plans = plans.filter((plan) => plan.dedicated_server_plan);
+			if (this.isDedicatedServerSite) {
+				plans = plans.filter(
+					(plan) =>
+						plan.dedicated_server_plan &&
+						(!plan.restrict_based_on_dedicated_server_plan ||
+							this.serverPlanPrice >= plan.minimum_server_price_usd),
+				);
 			} else {
 				plans = plans.filter((plan) => !plan.dedicated_server_plan);
 			}
@@ -82,10 +89,29 @@ export default {
 			if (this.hideRestrictedPlans) {
 				plans = plans.filter((plan) => !plan.restricted_plan);
 			}
+			if (this.selectedProvider) {
+				const provider = ['Generic', 'Scaleway'].includes(this.selectedProvider)
+					? 'AWS EC2'
+					: this.selectedProvider;
+
+				plans = plans.map((plan) => {
+					return {
+						...plan,
+						disabled:
+							plan.disabled ||
+							(plan.cloud_providers && plan.cloud_providers.length > 0
+								? !plan.cloud_providers.includes(provider)
+								: false),
+					};
+				});
+			}
+
+			plans = plans.filter((plan) => !plan.disabled);
 
 			return plans.map((plan) => {
 				return {
 					...plan,
+					sublabel: plan.plan_description || null,
 					features: [
 						{
 							label: `${this.$format.plural(
