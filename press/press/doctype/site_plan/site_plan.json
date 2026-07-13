@@ -11,6 +11,7 @@
   "section_break_2",
   "document_type",
   "plan_title",
+  "plan_description",
   "interval",
   "column_break_5",
   "price_inr",
@@ -30,6 +31,12 @@
   "support_included",
   "dedicated_server_plan",
   "is_frappe_plan",
+  "private_bench_support",
+  "app_server_plan_validation",
+  "restrict_based_on_dedicated_server_plan",
+  "minimum_server_price_usd",
+  "allowed_providers_section",
+  "cloud_providers",
   "customization_for_bench_section",
   "release_groups",
   "allowed_apps",
@@ -244,12 +251,56 @@
    "fieldname": "legacy_plan",
    "fieldtype": "Check",
    "label": "Legacy Plan"
+  },
+  {
+   "fieldname": "allowed_providers_section",
+   "fieldtype": "Section Break",
+   "label": "Allowed Providers"
+  },
+  {
+   "fieldname": "cloud_providers",
+   "fieldtype": "Table",
+   "label": "Cloud Providers",
+   "options": "Cloud Providers"
+  },
+  {
+   "default": "0",
+   "description": "Create Site On A Newly Deployed Bench",
+   "fieldname": "private_bench_support",
+   "fieldtype": "Check",
+   "label": "Private Bench Support"
+  },
+  {
+   "default": "0",
+   "depends_on": "eval:!!doc.restrict_based_on_dedicated_server_plan",
+   "fieldname": "minimum_server_price_usd",
+   "fieldtype": "Currency",
+   "label": "Minimum Server Price (USD)",
+   "mandatory_depends_on": "eval:!!doc.restrict_based_on_dedicated_server_plan"
+  },
+  {
+   "default": "0",
+   "fieldname": "restrict_based_on_dedicated_server_plan",
+   "fieldtype": "Check",
+   "label": "Restrict based on Dedicated Server Plan"
+  },
+  {
+   "fieldname": "plan_description",
+   "fieldtype": "Data",
+   "label": "Plan Description"
+  },
+  {
+   "depends_on": "eval:!!doc.dedicated_server_plan",
+   "description": "Applicable only when creating sites on dedicated servers",
+   "fieldname": "app_server_plan_validation",
+   "fieldtype": "Section Break",
+   "label": "App Server Plan validation"
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2025-07-30 10:48:08.852441",
+ "modified": "2026-04-05 17:52:09.248191",
  "modified_by": "Administrator",
  "module": "Press",
  "name": "Site Plan",
