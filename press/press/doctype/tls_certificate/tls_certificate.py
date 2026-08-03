@@ -162,6 +162,7 @@ class TLSCertificate(Document):
 		if self.wildcard:
 			self.trigger_server_tls_setup_callback()
 			self._update_secondary_wildcard_domains()
+			self.setup_standalone_wildcard_hosts()
 
 	def _update_secondary_wildcard_domains(self):
 		"""
@@ -189,6 +190,7 @@ class TLSCertificate(Document):
 			"Registry Server",
 			"Analytics Server",
 			"Trace Server",
+			"NAT Server",
 		]
 
 		for server_doctype in server_doctypes:
@@ -227,6 +229,30 @@ class TLSCertificate(Document):
 	def trigger_self_hosted_server_callback(self):
 		with suppress(Exception):
 			frappe.get_doc("Self Hosted Server", self.name).process_tls_cert_update()
+
+	def setup_standalone_wildcard_hosts(self):
+		standalone_servers = frappe.get_all(
+			"Server",
+			filters={
+				"status": ("not in", ["Archived", "Installing"]),
+				"is_standalone_setup": 1,
+			},
+			pluck="name",
+		)
+		if standalone_servers:
+			servers = frappe.get_all(
+				"Site",
+				filters={
+					"status": ("!=", "Archived"),
+					"domain": self.domain,
+					"server": ("in", standalone_servers),
+				},
+				distinct=True,
+				pluck="server",
+			)
+
+			for server in servers:
+				frappe.get_doc("Server", server).setup_wildcard_hosts()
 
 	def _extract_certificate_details(self):
 		x509 = OpenSSL.crypto.load_certificate(OpenSSL.crypto.FILETYPE_PEM, self.certificate)
@@ -388,7 +414,7 @@ def notify_custom_tls_renewal():
 			)
 
 
-def update_server_tls_certifcate(server, certificate):
+def update_server_tls_certifcate(server, certificate, throw_on_failure: bool = False):
 	try:
 		proxysql_admin_password = None
 		if server.doctype == "Proxy Server":
@@ -415,8 +441,10 @@ def update_server_tls_certifcate(server, certificate):
 			# to avoid causing TimestampMismatchError in other important tasks
 			update_modified=False,
 		)
-	except Exception:
+	except Exception as e:
 		log_error("TLS Setup Exception", server=server.as_dict())
+		if throw_on_failure:
+			raise Exception(f"Failed to update TLS certificate on {server.doctype} {server.name}") from e
 
 
 def retrigger_failed_wildcard_tls_callbacks():
@@ -429,6 +457,7 @@ def retrigger_failed_wildcard_tls_callbacks():
 		"Registry Server",
 		"Analytics Server",
 		"Trace Server",
+		"NAT Server",
 	]
 	for server_doctype in server_doctypes:
 		servers = frappe.get_all(
