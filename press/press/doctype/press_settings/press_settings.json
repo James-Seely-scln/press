@@ -19,6 +19,7 @@
   "micro_debit_charge_inr",
   "column_break_wrqp",
   "usage_record_creation_batch_size",
+  "default_server_plan_type",
   "invoicing_section",
   "invoicing_column",
   "gst_percentage",
@@ -86,12 +87,20 @@
   "docker_registry_username",
   "docker_registry_password",
   "docker_s3_secret_key",
+  "asset_store_section",
+  "asset_store_access_key",
+  "asset_store_secret_access_key",
+  "asset_store_endpoint",
+  "asset_store_region",
+  "asset_store_bucket_name",
+  "use_asset_store",
   "docker_build_section",
   "suspend_builds",
   "clone_directory",
   "build_directory",
   "build_server",
   "minimum_rebuild_memory",
+  "new_bench_concurrency_limit",
   "column_break_66",
   "code_server",
   "code_server_password",
@@ -104,6 +113,7 @@
   "remote_files_section",
   "remote_uploads_bucket",
   "remote_link_expiry",
+  "region_name",
   "column_break_51",
   "remote_access_key_id",
   "remote_secret_access_key",
@@ -157,8 +167,6 @@
   "aws_access_key_id",
   "column_break_agig",
   "aws_secret_access_key",
-  "hetzner_section",
-  "hetzner_api_token",
   "twilio_section",
   "twilio_account_sid",
   "twilio_api_key_sid",
@@ -171,6 +179,13 @@
   "column_break_xhfy",
   "spamd_api_key",
   "spamd_api_secret",
+  "chatwoot_section",
+  "enable_chat",
+  "chat_base_url",
+  "chat_website_token",
+  "column_break_srse",
+  "chat_support_start_time",
+  "chat_support_end_time",
   "marketplace_tab",
   "marketplace_settings_section",
   "max_allowed_screenshots",
@@ -184,6 +199,8 @@
   "plausible_site_id",
   "plausible_api_key",
   "infrastructure_tab",
+  "general_section",
+  "production_server_ip",
   "agent_section",
   "agent_repository_owner",
   "agent_sentry_dsn",
@@ -230,6 +247,8 @@
   "enable_email_pre_verification",
   "execute_incident_action",
   "enable_server_snapshot_recovery",
+  "use_new_deploy_flow",
+  "auto_upgrade_dependencies",
   "section_break_jstu",
   "enable_app_grouping",
   "default_apps",
@@ -240,12 +259,15 @@
   "partnership_fee_inr",
   "section_break_dhzi",
   "drive_resource_link",
+  "frappe_school_authentication_section",
+  "school_url",
+  "school_api_key",
+  "column_break_uxxz",
+  "school_api_secret",
   "hybrid_server_tab",
   "hybrid_cluster",
   "hybrid_domain",
   "tls_renewal_queue_size",
-  "code_spaces_tab",
-  "spaces_domain",
   "security_tab",
   "wazuh_server"
  ],
@@ -1064,17 +1086,6 @@
    "label": "Plausible site id"
   },
   {
-   "fieldname": "code_spaces_tab",
-   "fieldtype": "Tab Break",
-   "label": "Code Spaces"
-  },
-  {
-   "fieldname": "spaces_domain",
-   "fieldtype": "Link",
-   "label": "Spaces Domain",
-   "options": "Root Domain"
-  },
-  {
    "default": "0",
    "fieldname": "suspend_builds",
    "fieldtype": "Check",
@@ -1276,16 +1287,6 @@
    "fieldname": "usage_record_creation_batch_size",
    "fieldtype": "Int",
    "label": "Usage Record Creation Batch Size"
-  },
-  {
-   "fieldname": "hetzner_section",
-   "fieldtype": "Section Break",
-   "label": "Hetzner"
-  },
-  {
-   "fieldname": "hetzner_api_token",
-   "fieldtype": "Password",
-   "label": "Hetzner API Token"
   },
   {
    "fieldname": "press_trial_plan",
@@ -1564,11 +1565,156 @@
    "fieldname": "disable_binlog_indexer_service",
    "fieldtype": "Check",
    "label": "Disable Binlog Indexer Service"
+  },
+  {
+   "fieldname": "default_server_plan_type",
+   "fieldtype": "Link",
+   "label": "Default Server Plan Type",
+   "options": "Server Plan Type"
+  },
+  {
+   "fieldname": "frappe_school_authentication_section",
+   "fieldtype": "Section Break",
+   "label": "Frappe School Authentication"
+  },
+  {
+   "fieldname": "school_url",
+   "fieldtype": "Data",
+   "label": "School URL"
+  },
+  {
+   "fieldname": "school_api_key",
+   "fieldtype": "Data",
+   "label": "School API Key"
+  },
+  {
+   "fieldname": "column_break_uxxz",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "school_api_secret",
+   "fieldtype": "Password",
+   "label": "School API Secret"
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "asset_store_section",
+   "fieldtype": "Section Break",
+   "label": "Asset Store"
+  },
+  {
+   "default": "0",
+   "description": "Will only use this asset storage backend if checked.",
+   "fieldname": "use_asset_store",
+   "fieldtype": "Check",
+   "label": "Use Asset Store"
+  },
+  {
+   "fieldname": "asset_store_access_key",
+   "fieldtype": "Data",
+   "label": "Asset Store Access Key"
+  },
+  {
+   "fieldname": "asset_store_secret_access_key",
+   "fieldtype": "Password",
+   "label": "Asset Store Secret Access Key"
+  },
+  {
+   "fieldname": "asset_store_endpoint",
+   "fieldtype": "Data",
+   "label": "Asset Store Endpoint"
+  },
+  {
+   "fieldname": "asset_store_bucket_name",
+   "fieldtype": "Data",
+   "label": "Asset Store Bucket Name "
+  },
+  {
+   "fieldname": "asset_store_region",
+   "fieldtype": "Data",
+   "label": "Asset Store Region"
+  },
+  {
+   "fieldname": "frappe_school_authentication_section",
+   "fieldtype": "Section Break",
+   "label": "Frappe School Authentication"
+  },
+  {
+   "fieldname": "general_section",
+   "fieldtype": "Section Break",
+   "label": "General"
+  },
+  {
+   "fieldname": "production_server_ip",
+   "fieldtype": "Data",
+   "label": "Production Server IP"
+  },
+  {
+   "default": "30",
+   "fieldname": "new_bench_concurrency_limit",
+   "fieldtype": "Int",
+   "label": "New Bench Concurrency Limit"
+  },
+  {
+   "default": "0",
+   "fieldname": "use_new_deploy_flow",
+   "fieldtype": "Check",
+   "label": "Use New Deploy Flow"
+  },
+  {
+   "fieldname": "chatwoot_section",
+   "fieldtype": "Section Break",
+   "label": "Chat Support"
+  },
+  {
+   "fieldname": "column_break_srse",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "0",
+   "fieldname": "enable_chat",
+   "fieldtype": "Check",
+   "label": "Enable Chat"
+  },
+  {
+   "fieldname": "chat_base_url",
+   "fieldtype": "Data",
+   "label": "Chat Base URL"
+  },
+  {
+   "fieldname": "chat_website_token",
+   "fieldtype": "Data",
+   "label": "Chat Website Token"
+  },
+  {
+   "default": "10",
+   "fieldname": "chat_support_start_time",
+   "fieldtype": "Select",
+   "label": "Chat Support Start Time",
+   "options": "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n14\n15\n16\n17\n18\n19\n20\n21\n22\n23"
+  },
+  {
+   "default": "18",
+   "fieldname": "chat_support_end_time",
+   "fieldtype": "Select",
+   "label": "Chat Support End Time",
+   "options": "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n14\n15\n16\n17\n18\n19\n20\n21\n22\n23\n24"
+  },
+  {
+   "fieldname": "region_name",
+   "fieldtype": "Data",
+   "label": "Region Name"
+  },
+  {
+   "default": "0",
+   "fieldname": "auto_upgrade_dependencies",
+   "fieldtype": "Check",
+   "label": "Auto Upgrade Dependencies"
   }
  ],
  "issingle": 1,
  "links": [],
- "modified": "2025-12-09 00:06:25.213870",
+ "modified": "2026-04-30 18:44:43.851468",
  "modified_by": "Administrator",
  "module": "Press",
  "name": "Press Settings",
@@ -1587,7 +1733,6 @@
  ],
  "quick_entry": 1,
  "row_format": "Dynamic",
- "rows_threshold_for_grid_search": 20,
  "sort_field": "modified",
  "sort_order": "DESC",
  "states": [],
