@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import datetime
 from typing import TYPE_CHECKING
 
 import frappe
@@ -12,6 +13,8 @@ from frappe.query_builder.functions import Coalesce, Count
 from frappe.utils import cint, flt
 
 from press.overrides import get_permission_query_conditions_for_doctype
+from press.press.doctype.database_server.database_server import DatabaseServer
+from press.press.doctype.s3_storage_plan.s3_storage_plan import AUDIT_LOG_STORAGE_PLAN
 from press.press.doctype.site_plan.site_plan import SitePlan
 from press.utils import log_error
 from press.utils.jobs import has_job_timeout_exceeded
@@ -99,7 +102,12 @@ class Subscription(Document):
 		self.validate_duplicate()
 
 	def on_update(self):
-		if self.plan_type in ["Server Storage Plan", "Server Snapshot Plan"]:
+		if self.plan_type in [
+			"Server Storage Plan",
+			"Server Snapshot Plan",
+			"Static IP Plan",
+			"S3 Storage Plan",
+		]:
 			return
 
 		doc = self.get_subscribed_document()
@@ -110,6 +118,11 @@ class Subscription(Document):
 		if self.enabled and doc.plan != self.plan:
 			doc.plan = self.plan
 			doc.save()
+
+			if doc.doctype == "Server" and doc.is_unified_server:
+				# Update database server plan for sanity in case of unified servers
+				frappe.db.set_value("Database Server", doc.database_server, "plan", self.plan)
+
 		if not self.enabled and doc.plan:
 			doc.plan = ""
 			doc.save()
@@ -181,6 +194,12 @@ class Subscription(Document):
 				),
 				2,
 			)
+
+		elif self.plan_type == "S3 Storage Plan" and self.plan == AUDIT_LOG_STORAGE_PLAN:
+			price = plan.price_inr if team.currency == "INR" else plan.price_usd
+			price_per_day = price / plan.period  # no rounding off to avoid discrepancies
+			database_server = DatabaseServer("Database Server", self.document_name)
+			amount = flt(price_per_day * database_server.get_audit_log_storage_gb(), 2)
 		else:
 			amount = plan.get_price_for_interval(self.interval, team.currency)
 
@@ -235,11 +254,23 @@ class Subscription(Document):
 			date = date or frappe.utils.today()
 			filters.update({"date": date})
 
-		if self.interval == "Monthly":
+		elif self.interval == "Monthly":
 			date = frappe.utils.getdate()
 			first_day = frappe.utils.get_first_day(date)
 			last_day = frappe.utils.get_last_day(date)
 			filters.update({"date": ("between", (first_day, last_day))})
+
+		elif self.interval == "Hourly":
+			last_usage_record = frappe.db.get_value(
+				"Usage Record", filters, ["date", "time"], order_by="creation desc", as_dict=True
+			)
+			if not last_usage_record:
+				return False
+
+			last_datetime = datetime.datetime.combine(
+				last_usage_record.date, frappe.utils.get_time(last_usage_record.time)
+			)
+			return (frappe.utils.now_datetime() - last_datetime).total_seconds() < 3600
 
 		result = frappe.db.get_all("Usage Record", filters=filters, limit=1)
 		return bool(result)
@@ -248,6 +279,7 @@ class Subscription(Document):
 		if not self.is_new():
 			return
 		filters = {
+			"enabled": 1,
 			"team": self.team,
 			"document_type": self.document_type,
 			"document_name": self.document_name,
@@ -338,6 +370,8 @@ def paid_plans():
 		"Server Plan",
 		"Server Storage Plan",
 		"Cluster Plan",
+		"Static IP Plan",
+		"S3 Storage Plan",
 	]
 
 	for name in doctypes:
