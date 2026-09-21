@@ -16,6 +16,19 @@
 				Upgrade Now
 			</Button>
 		</DismissableBanner>
+		<AlertBanner
+			:title="`You have ${$resources.inQueueBenches.data.length} bench(es) in queue. Please wait for them to be provisioned.`"
+			type="info"
+			v-if="$resources.inQueueBenches.data?.length > 0"
+		>
+			<Button
+				class="ml-auto min-w-[7rem]"
+				variant="outline"
+				link="https://docs.frappe.io/cloud/benches/updating_a_bench#bench-provisioning-amp-queueing"
+			>
+				Know More
+			</Button>
+		</AlertBanner>
 		<ObjectList class="mt-3" :options="listOptions" />
 		<Dialog
 			v-model="showAppVersionDialog"
@@ -38,6 +51,11 @@ import { toast } from 'vue-sonner';
 import ActionButton from '../components/ActionButton.vue';
 import SSHCertificateDialog from '../components/group/SSHCertificateDialog.vue';
 import ObjectList from '../components/ObjectList.vue';
+import {
+	filterControls as benchFilterControls,
+	getBenchTitleSuffix,
+	getClusterImagePrefix,
+} from '../objects/bench';
 import {
 	getSitesTabColumns,
 	sitesTabRoute,
@@ -67,13 +85,34 @@ export default {
 					group: this.$releaseGroup.name,
 					skip_team_filter_for_system_user_and_support_agent: true,
 				},
-				fields: ['name', 'status'],
+				fields: [
+					'name',
+					'status',
+					'cluster.image as cluster_image',
+					'cluster.title as cluster_title',
+				],
+				orderBy: 'creation desc',
+				pageLength: this.isPublicBench ? 20 : 99999,
+				auto: true,
+				onSuccess() {
+					if (this.isPublicBench) return;
+					this.$resources.sites.fetch();
+				},
+			};
+		},
+		inQueueBenches() {
+			return {
+				type: 'list',
+				doctype: 'New Bench Queue',
+				filters: {
+					group: this.$releaseGroup.name,
+					status: 'Queued',
+					skip_team_filter_for_system_user_and_support_agent: true,
+				},
+				fields: ['status', 'group'],
 				orderBy: 'creation desc',
 				pageLength: 99999,
 				auto: true,
-				onSuccess() {
-					this.$resources.sites.fetch();
-				},
 			};
 		},
 		sites() {
@@ -105,7 +144,50 @@ export default {
 		},
 	},
 	computed: {
+		// Public benches has a lot of site so dont show sites list
+		isPublicBench() {
+			return Boolean(this.$releaseGroup.doc?.public);
+		},
 		listOptions() {
+			if (this.isPublicBench) return this.benchListOptions;
+			return this.groupedSiteListOptions;
+		},
+
+		benchListOptions() {
+			return {
+				list: this.$resources.benches,
+				emptyStateMessage: 'No benches found',
+				columns: [
+					{
+						label: 'Bench',
+						fieldname: 'name',
+						class: 'font-medium',
+						suffix: getBenchTitleSuffix,
+					},
+					{
+						label: 'Status',
+						fieldname: 'status',
+						type: 'Badge',
+						width: '150px',
+					},
+					{
+						label: 'Region',
+						fieldname: 'cluster',
+						width: 0.75,
+						format: (value, row) => row.cluster_title || value || '',
+						prefix: getClusterImagePrefix,
+					},
+				],
+				filterControls: () =>
+					benchFilterControls().filter(
+						(control) => control.fieldname !== 'group',
+					),
+				route: (row) => ({ name: 'Bench Detail', params: { name: row.name } }),
+				rowActions: ({ row }) => this.benchOptions(row),
+				primaryAction: this.newSiteAction,
+			};
+		},
+		groupedSiteListOptions() {
 			return {
 				list: this.$resources.sites,
 				groupHeader: ({ group: bench }) => {
@@ -118,7 +200,7 @@ export default {
 						<div class="flex items-center">
 							<Tooltip text="View bench details">
 								<a
-									class="text-base font-medium leading-6 text-gray-900 cursor-pointer"
+									class="text-base font-medium leading-6 text-ink-gray-9 cursor-pointer"
 									href={`/dashboard/benches/${bench.name}`}
 								>
 									{bench.group}
@@ -130,7 +212,7 @@ export default {
 							{bench.has_app_patch_applied && (
 								<Tooltip text="Apps in this bench may have been patched">
 									<a
-										class="p-1 ml-2 text-gray-700 bg-gray-100 rounded"
+										class="p-1 ml-2 text-ink-gray-7 bg-surface-gray-2 rounded"
 										href="https://docs.frappe.io/cloud/benches/app-patches"
 										target="_blank"
 									>
@@ -141,7 +223,7 @@ export default {
 							{bench.has_updated_inplace && (
 								<Tooltip text="This bench has been updated in place">
 									<a
-										class="p-1 ml-2 text-gray-700 bg-gray-100 rounded"
+										class="p-1 ml-2 text-ink-gray-7 bg-surface-gray-2 rounded"
 										href="https://docs.frappe.io/cloud/in-place-updates"
 										target="_blank"
 									>
@@ -159,19 +241,7 @@ export default {
 				columns: getSitesTabColumns(false),
 				filterControls: siteTabFilterControls,
 				route: sitesTabRoute,
-				primaryAction: () => {
-					return {
-						label: 'New Site',
-						slots: {
-							prefix: icon('plus', 'w-4 h-4'),
-						},
-						disabled: !this.$releaseGroup.doc?.deploy_information?.last_deploy,
-						route: {
-							name: 'Release Group New Site',
-							params: { bench: this.releaseGroup },
-						},
-					};
-				},
+				primaryAction: this.newSiteAction,
 			};
 		},
 		appVersionOptions() {
@@ -221,13 +291,33 @@ export default {
 		},
 	},
 	methods: {
+		newSiteAction() {
+			return {
+				label: 'New Site',
+				slots: {
+					prefix: icon('plus', 'w-4 h-4'),
+				},
+				disabled:
+					!this.$resources.benches.data?.length ||
+					!this.$resources.benches.data?.some(
+						(bench) => bench.status === 'Active',
+					) ||
+					!this.$releaseGroup.doc?.deploy_information?.last_deploy,
+				route: {
+					name: 'Release Group New Site',
+					params: { bench: this.releaseGroup },
+				},
+			};
+		},
 		groupSitesByBench(data) {
 			if (!this.$resources.benches.data) return [];
 			return this.$resources.benches.data.map((bench) => {
 				let sites = (data || []).filter((site) => site.bench === bench.name);
+				const isLargeDataset = this.$resources.benches.data?.length >= 1000;
 				return {
 					...bench,
-					collapsed: false,
+					// To prevent rendering delays for large servers with many benches and sites
+					collapsed: isLargeDataset,
 					group: bench.name,
 					rows: sites,
 				};
@@ -294,7 +384,9 @@ export default {
 				},
 				{
 					label: 'Update All Sites',
-					condition: () => bench.status === 'Active' && bench.rows.length > 0,
+					condition: () =>
+						bench.status === 'Active' &&
+						(bench.rows?.length ?? bench.site_count) > 0,
 					onClick: () => {
 						confirmDialog({
 							title: 'Update All Sites',

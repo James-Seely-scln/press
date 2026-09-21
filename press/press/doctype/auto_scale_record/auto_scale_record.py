@@ -6,7 +6,7 @@ import calendar
 import contextlib
 import datetime
 import typing
-from typing import Literal, TypedDict
+from typing import Literal
 
 import frappe
 from frappe.model.document import Document
@@ -22,10 +22,6 @@ if typing.TYPE_CHECKING:
 	from press.press.doctype.prometheus_alert_rule.prometheus_alert_rule import PrometheusAlertRule
 	from press.press.doctype.server.server import Server
 	from press.press.doctype.virtual_machine.virtual_machine import VirtualMachine
-
-
-class PrometheusAlertRuleRow(TypedDict):
-	expression: str
 
 
 class AutoScaleStepFailureHandler:
@@ -47,7 +43,7 @@ class AutoScaleStepFailureHandler:
 		frappe.db.commit()
 
 
-class AutoScaleRecord(Document, StepHandler):
+class AutoScaleRecord(Document, AutoScaleStepFailureHandler, StepHandler):
 	# begin: auto-generated types
 	# This code is auto-generated. Do not modify anything in this block.
 
@@ -134,7 +130,9 @@ class AutoScaleRecord(Document, StepHandler):
 
 		self.secondary_server = frappe.db.get_value("Server", self.primary_server, "secondary_server")
 		if not self.secondary_server:
-			frappe.throw("Primary server must have a secondary server to auto scale")
+			frappe.throw(
+				"Auto scaling needs a secondary server. Please add a secondary (replica) server to the primary before enabling auto scale."
+			)
 
 	def get_doc(self, doc):
 		doc.steps = self.get_steps_for_dashboard()
@@ -254,7 +252,7 @@ class AutoScaleRecord(Document, StepHandler):
 			"job",
 		)
 
-		self.handle_agent_job(step, job, poll=True)
+		self.handle_agent_job(step, job, poll=False)
 
 	def switch_to_secondary(self, step: "ScaleStep"):
 		"""Prepare Agent To Switch To Secondary"""
@@ -264,9 +262,13 @@ class AutoScaleRecord(Document, StepHandler):
 			["docker_registry_url", "docker_registry_username", "docker_registry_password"],
 			as_dict=True,
 		)
-		primary_server_private_ip = frappe.db.get_value("Server", self.primary_server, "private_ip")
+
+		primary_server_private_ip, primary_server_cluster = frappe.db.get_value(
+			"Server", self.primary_server, ["private_ip", "cluster"]
+		)
 		secondary_server_private_ip = frappe.db.get_value("Server", self.secondary_server, "private_ip")
 		shared_directory = frappe.db.get_single_value("Press Settings", "shared_directory")
+		cluster_repository = frappe.db.get_value("Cluster", primary_server_cluster, "repository")
 
 		agent_job = Agent(self.secondary_server).change_bench_directory(
 			redis_connection_string_ip=primary_server_private_ip,
@@ -274,7 +276,8 @@ class AutoScaleRecord(Document, StepHandler):
 			directory=shared_directory,
 			is_primary=False,
 			registry_settings={
-				"url": settings.docker_registry_url,
+				"url": cluster_repository
+				or settings.docker_registry_url,  # Use the cluster repository if present
 				"username": settings.docker_registry_username,
 				"password": settings.docker_registry_password,
 			},
@@ -303,7 +306,7 @@ class AutoScaleRecord(Document, StepHandler):
 			"job",
 		)
 
-		self.handle_agent_job(step, job, poll=True)
+		self.handle_agent_job(step, job, poll=False)
 
 	def remove_redis_localhost_bind(self, step: "ScaleStep"):
 		"""Expose Redis Of Primary Server"""
@@ -331,7 +334,7 @@ class AutoScaleRecord(Document, StepHandler):
 			"job",
 		)
 
-		self.handle_agent_job(step, job, poll=True)
+		self.handle_agent_job(step, job, poll=False)
 
 	def mark_server_as_auto_scale(self, step: "ScaleStep"):
 		"""Mark Server As Auto Scaled"""
@@ -407,7 +410,7 @@ class AutoScaleRecord(Document, StepHandler):
 			"job",
 		)
 
-		self.handle_agent_job(step, job, poll=True)
+		self.handle_agent_job(step, job, poll=False)
 
 	def switch_to_primary(self, step: "ScaleStep"):
 		"""Prepare Agent To Switch To Primary"""
@@ -444,7 +447,7 @@ class AutoScaleRecord(Document, StepHandler):
 			"job",
 		)
 
-		self.handle_agent_job(step, job, poll=True)
+		self.handle_agent_job(step, job, poll=False)
 
 	def _gracefully_stop_benches_on_secondary(self) -> None:
 		secondary_server: "Server" = frappe.get_cached_doc("Server", self.secondary_server)
@@ -621,7 +624,7 @@ class AutoScaleRecord(Document, StepHandler):
 			steps=self.scale_steps,
 			timeout=18000,
 			at_front=True,
-			queue="long",
+			queue="auto-scale",
 			enqueue_after_commit=True,
 		)
 
@@ -824,7 +827,7 @@ def is_secondary_ready_for_scale_down(server: Server) -> bool:
 	if not scale_down_thresholds:
 		return True
 
-	secondary_server_usage = get_cpu_and_memory_usage(server.secondary_server)
+	secondary_server_usage = get_cpu_and_memory_usage(server.secondary_server)  # type: ignore[arg-type]
 	secondary_server_cpu_usage = secondary_server_usage["vcpu"] * 100
 	secondary_server_memory_usage = secondary_server_usage["memory"] * 100
 
@@ -897,6 +900,15 @@ def update_or_delete_prometheus_rule_for_scaling(
 	existing.save()
 
 
+def _should_enable_trigger(instance_name: str, action: Literal["Scale Up", "Scale Down"]) -> bool:
+	"""Only enable scale down trigger if server is already scaled up"""
+	if action == "Scale Up":
+		return True
+
+	scaled_up = frappe.db.get_value("Server", instance_name, "scaled_up")
+	return bool(scaled_up)
+
+
 def create_prometheus_rule_for_scaling(
 	instance_name: str,
 	metric: Literal["CPU", "Memory"],
@@ -933,7 +945,7 @@ def create_prometheus_rule_for_scaling(
 		new_expression = " OR ".join(parts)
 
 		existing.expression = new_expression
-		existing.enabled = True
+		existing.enabled = _should_enable_trigger(instance_name, action)
 		existing.save()  # Need to call this to allow on_update to trigger
 
 	else:
@@ -943,7 +955,7 @@ def create_prometheus_rule_for_scaling(
 				"name": rule_name,
 				"description": f"Autoscale trigger for {instance_name}",
 				"expression": query_with_threshold,
-				"enabled": 1,
+				"enabled": _should_enable_trigger(instance_name, action),
 				"for": "5m",
 				"repeat_interval": "1h"
 				if action == "Scale Up"
