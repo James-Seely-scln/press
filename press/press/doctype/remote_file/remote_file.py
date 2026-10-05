@@ -5,12 +5,18 @@ from __future__ import annotations
 
 import json
 import pprint
+from typing import TYPE_CHECKING
 
 import frappe
 import requests
 from boto3 import client, resource
 from frappe.model.document import Document
 from frappe.utils.password import get_decrypted_password
+
+from press.press.doctype.site_activity.site_activity import log_site_activity
+
+if TYPE_CHECKING:
+	from press.press.doctype.backup_bucket.backup_bucket import BackupBucket
 
 
 def get_remote_key(file):
@@ -159,8 +165,26 @@ class RemoteFile(Document):
 		file_type: DF.Data | None
 		site: DF.Link | None
 		status: DF.Literal["Available", "Unavailable"]
+		team: DF.Link | None
 		url: DF.Code | None
 	# end: auto-generated types
+
+	def before_validate(self):
+		self.ensure_team_set()
+
+	def ensure_team_set(self):
+		if self.team:
+			return
+
+		if self.site:
+			# Backup remote files are created in agent job callbacks, where the
+			# session user is Administrator. The site's team is the owner there.
+			self.team = frappe.db.get_value("Site", self.site, "team")
+
+		if not self.team:
+			from press.utils import get_current_team
+
+			self.team = get_current_team()
 
 	@property
 	def s3_client(self):
@@ -182,12 +206,24 @@ class RemoteFile(Document):
 		else:
 			return None
 
+		region = frappe.db.get_single_value("Press Settings", "backup_region")
+		endpoint_url = None
+
+		if frappe.db.exists("Backup Bucket", self.bucket):
+			backup_bucket: BackupBucket = frappe.get_doc("Backup Bucket", self.bucket)
+			if backup_bucket.replication_enabled:
+				region = backup_bucket.replication_region
+				endpoint_url = backup_bucket.replication_endpoint_url or endpoint_url
+			else:
+				region = backup_bucket.region
+				endpoint_url = backup_bucket.endpoint_url or endpoint_url
+
 		return client(
 			"s3",
 			aws_access_key_id=access_key_id,
 			aws_secret_access_key=secret_access_key,
-			region_name=frappe.db.get_value("Backup Bucket", self.bucket, "region")
-			or frappe.db.get_single_value("Press Settings", "backup_region"),
+			region_name=region,
+			endpoint_url=endpoint_url,
 		)
 
 	@property
@@ -205,7 +241,13 @@ class RemoteFile(Document):
 			self.db_set("status", "Unavailable")
 			return False
 		try:
-			return self.s3_client.head_object(Bucket=self.bucket, Key=self.file_path)
+			bucket = self.bucket
+			if frappe.db.exists("Backup Bucket", self.bucket):
+				backup_bucket: BackupBucket = frappe.get_doc("Backup Bucket", self.bucket)
+				if backup_bucket.replication_enabled:
+					bucket = backup_bucket.replication_bucket
+
+			return self.s3_client.head_object(Bucket=bucket, Key=self.file_path)
 		except Exception:
 			self.db_set("status", "Unavailable")
 			return False
@@ -223,9 +265,22 @@ class RemoteFile(Document):
 
 	@frappe.whitelist()
 	def get_download_link(self):
+		# The `site` field is not set during the upload & restore of files.
+		# Not gonna play with the code here.
+		# Also, it doesn't make sense to log access while restoring.
+		if self.site:
+			log_site_activity(site=self.site, action="Access Offsite Backups")
+			frappe.db.commit()
+
+		bucket = self.bucket
+		if frappe.db.exists("Backup Bucket", bucket):
+			backup_bucket: BackupBucket = frappe.get_doc("Backup Bucket", bucket)
+			if backup_bucket.replication_enabled:
+				bucket = backup_bucket.replication_bucket
+
 		return self.url or self.s3_client.generate_presigned_url(
 			"get_object",
-			Params={"Bucket": self.bucket, "Key": self.file_path},
+			Params={"Bucket": bucket, "Key": self.file_path},
 			ExpiresIn=frappe.db.get_single_value("Press Settings", "remote_link_expiry") or 3600,
 		)
 
@@ -246,6 +301,7 @@ class RemoteFile(Document):
 		if int(self.file_size or 0):
 			return int(self.file_size or 0)
 
+		assert self.url, "URL must be set to get file size"
 		response = requests.head(self.url)
 		self.file_size = int(response.headers.get("content-length", 0))
 		self.save()
@@ -260,14 +316,19 @@ def delete_s3_files(buckets):
 
 	press_settings = frappe.get_single("Press Settings")
 	for bucket_name in buckets:
+		endpoint_url = (
+			frappe.db.get_value("Backup Bucket", bucket_name, "endpoint_url") or "https://s3.amazonaws.com"
+		)
+		if "s3.me-south-1.amazonaws.com" in endpoint_url:
+			continue
+
 		s3 = resource(
 			"s3",
 			aws_access_key_id=press_settings.offsite_backups_access_key_id,
 			aws_secret_access_key=press_settings.get_password(
 				"offsite_backups_secret_access_key", raise_exception=False
 			),
-			endpoint_url=frappe.db.get_value("Backup Bucket", bucket_name, "endpoint_url")
-			or "https://s3.amazonaws.com",
+			endpoint_url=endpoint_url,
 		)
 		bucket = s3.Bucket(bucket_name)
 		for objects in chunk([{"Key": x} for x in buckets[bucket_name]], 1000):
