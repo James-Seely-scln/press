@@ -18,11 +18,11 @@
 		v-model="show"
 	>
 		<template v-slot:body-content>
-			<p class="mb-5 text-sm text-gray-800">
+			<p class="mb-5 text-sm text-ink-gray-8">
 				Help us improve your experience by sharing your thoughts.
 			</p>
 			<div class="mt-3">
-				<span class="mb-2 block text-sm leading-4 text-gray-600">
+				<span class="mb-2 block text-sm leading-4 text-ink-gray-6">
 					Please rate your experience
 				</span>
 				<StarRatingInput v-model="rating" />
@@ -118,19 +118,19 @@ export default {
 	computed: {
 		options() {
 			return [
-				'I was testing the product',
+				'Frappe Cloud is complex and difficult to use',
+				'Unable to migrate to Frappe Cloud',
 				'I prefer self-hosting my instance',
-				'Moved site to another Frappe Cloud account',
-				'Frappe Cloud is too expensive for me',
-				'Payment issues',
-				'Missing Integration App',
 				'Poor partner experience',
 				'Missing Country Compliance App',
+				'Moved site to another Frappe Cloud account',
+				'Frappe Cloud is too expensive for me',
+				'Missing Integration App',
 				'Apps are too complex to use and setup',
-				'Frappe Cloud is complex and difficult to use',
+				'Payment issues',
 				'ERPNext is too complex for my needs',
-				'Unable to migrate to Frappe Cloud',
 				'My reason is not listed here',
+				'I was testing the product',
 			];
 		},
 	},
