@@ -1,4 +1,5 @@
 import json
+import threading
 import typing
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -27,6 +28,40 @@ from press.press.doctype.ansible_play.ansible_play import AnsiblePlay
 if typing.TYPE_CHECKING:
 	from press.press.doctype.agent_job.agent_job import AgentJob
 	from press.press.doctype.virtual_machine.virtual_machine import VirtualMachine
+
+
+# Patch Ansible's hooks once at import and route callbacks through this thread-local
+# instead of re-patching every run. Each thread tracks its own active Ansible instance,
+# so concurrent runs in different threads don't clobber each other's callbacks. run()
+# resets it on entry, so a job killed mid-run (timeout, etc.) can't leak stale state into
+# the next job the way the old unpatch-at-end-of-run pattern did.
+_ansible_local = threading.local()
+
+
+def _get_current_ansible() -> "Ansible | None":
+	return getattr(_ansible_local, "current", None)
+
+
+def _patched_action_module_run(*args, **kwargs):
+	result = _action_module_run_orig(*args, **kwargs)
+	current_ansible = _get_current_ansible()
+	if current_ansible:
+		current_ansible.callback.on_async_poll(result)
+	return result
+
+
+def _patched_poll_async_result(executor, result, templar, task_vars=None):
+	current_ansible = _get_current_ansible()
+	if current_ansible:
+		task = executor._task
+		current_ansible.callback.on_async_start(task._role.get_name(), task.name, result["ansible_job_id"])
+	return _poll_async_result_orig(executor, result, templar, task_vars=task_vars)
+
+
+_action_module_run_orig = ActionModule.run
+_poll_async_result_orig = TaskExecutor._poll_async_result
+ActionModule.run = _patched_action_module_run
+TaskExecutor._poll_async_result = _patched_poll_async_result
 
 
 def reconnect_on_failure():
@@ -164,12 +199,12 @@ class AnsibleCallback(CallbackBase):
 
 class Ansible:
 	def __init__(self, server, playbook, user="root", variables=None, port=22):
-		self.patch()
 		self.server = server
 		self.playbook = playbook
 		self.playbook_path = frappe.get_app_path("press", "playbooks", self.playbook)
-		self.host = f"{server.ip}:{port}"
-		self.variables = variables or {}
+		self.host = server.ip if server.ip else server.private_ip
+		# Every playbook gets the provider, so templates don't depend on the caller passing it
+		self.variables = {"cloud_provider": server.get("provider") or ""} | (variables or {})
 
 		constants.HOST_KEY_CHECKING = False
 		context.CLIARGS = ImmutableDict(
@@ -190,6 +225,8 @@ class Ansible:
 
 		self.sources = f"{self.host},"
 		self.inventory = InventoryManager(loader=self.loader, sources=self.sources)
+		self.inventory.get_host(self.host).set_variable("ansible_port", port)
+
 		self.variable_manager = VariableManager(loader=self.loader, inventory=self.inventory)
 
 		self.callback = AnsibleCallback()
@@ -213,31 +250,8 @@ class Ansible:
 
 		return proxy_command
 
-	def patch(self):
-		def modified_action_module_run(*args, **kwargs):
-			result = self.action_module_run(*args, **kwargs)
-			self.callback.on_async_poll(result)
-			return result
-
-		def modified_poll_async_result(executor, result, templar, task_vars=None):
-			job_id = result["ansible_job_id"]
-			task = executor._task
-			self.callback.on_async_start(task._role.get_name(), task.name, job_id)
-			return self._poll_async_result(executor, result, templar, task_vars=task_vars)
-
-		if ActionModule.run.__module__ != "press.runner":
-			self.action_module_run = ActionModule.run
-			ActionModule.run = modified_action_module_run
-
-		if TaskExecutor.run.__module__ != "press.runner":
-			self._poll_async_result = TaskExecutor._poll_async_result
-			TaskExecutor._poll_async_result = modified_poll_async_result
-
-	def unpatch(self):
-		TaskExecutor._poll_async_result = self._poll_async_result
-		ActionModule.run = self.action_module_run
-
 	def run(self) -> AnsiblePlay:
+		_ansible_local.current = self
 		self.executor = PlaybookExecutor(
 			playbooks=[self.playbook_path],
 			inventory=self.inventory,
@@ -251,7 +265,6 @@ class Ansible:
 		self.callback.tasks = self.tasks
 		self.callback.task_list = self.task_list
 		self.executor.run()
-		self.unpatch()
 		return frappe.get_doc("Ansible Play", self.play)
 
 	def create_ansible_play(self):
@@ -371,6 +384,7 @@ class StepHandler:
 		ansible: Ansible,
 		e: Exception | None = None,
 	) -> None:
+		step.job_type = "Ansible Play"
 		step.job = getattr(ansible, "play", None)
 		step.status = Status.Failure
 		step.output = str(e)
@@ -381,19 +395,20 @@ class StepHandler:
 		step.output = str(e)
 		step.save()
 
-	def fail(self):
-		self.status = Status.Failure
+	def fail(self, failure_status: str = Status.Failure):
+		self.status = failure_status
 		self.save()
 		frappe.db.commit()
 
-	def succeed(self):
-		self.status = Status.Success
+	def succeed(self, success_status: str = Status.Success):
+		self.status = success_status
 		self.save()
 		frappe.db.commit()
 
 	def handle_step_failure(self):
-		# can be implemented by the controller
-		pass
+		# can be overridden by controllers
+		self.error = frappe.get_traceback(with_context=True)
+		self.save()
 
 	def get_steps(self, methods: list) -> list[dict]:
 		"""Generate a list of steps to be executed for NFS volume attachment."""
@@ -406,8 +421,12 @@ class StepHandler:
 			for method in methods
 		]
 
-	def _get_method(self, method_name: str):
+	def _get_method(self, method_name: str, method_objects: list[object] | None = None):
 		"""Retrieve a method object by name."""
+		method_objects = method_objects or []
+		for method_object in method_objects:
+			if hasattr(method_object, method_name):
+				return getattr(method_object, method_name)
 		return getattr(self, method_name)
 
 	def next_step(self, steps: list[GenericStep]) -> GenericStep | None:
@@ -417,37 +436,50 @@ class StepHandler:
 
 		return None
 
-	def _execute_steps(self, steps: list[GenericStep]):
+	def _execute_steps(
+		self,
+		steps: list[GenericStep],
+		commit: bool = False,
+		start_status: str = Status.Running,
+		success_status: str = Status.Success,
+		failure_status: str = Status.Failure,
+		method_objects: list[object] | None = None,
+	):
 		"""It is now required to be with a `enqueue_doc` else the first step executes in the web worker"""
-		self.status = Status.Running
+		self.status = start_status
 		self.save()
-		frappe.db.commit()
 
 		step = self.next_step(steps)
 		if not step:
-			self.succeed()
+			self.succeed(success_status)
 			return
 
 		# Run a single step in this job
 		step = step.reload()
-		method = self._get_method(step.method_name)
+		method = self._get_method(method_objects=method_objects, method_name=step.method_name)
 
 		try:
 			method(step)
-			frappe.db.commit()
 		except Exception:
 			self.reload()
-			self.fail()
+			self.fail(failure_status)
 			self.handle_step_failure()
-			frappe.db.commit()
 			return
+
+		if commit:
+			frappe.db.commit()
 
 		# After step completes, queue the next step
 		frappe.enqueue_doc(
 			self.doctype,
 			self.name,
 			"_execute_steps",
+			method_objects=method_objects,
 			steps=steps,
+			commit=commit,
+			start_status=start_status,
+			success_status=success_status,
+			failure_status=failure_status,
 			timeout=18000,
 			at_front=True,
 			queue="long",

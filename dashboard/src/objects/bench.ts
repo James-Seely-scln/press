@@ -142,13 +142,13 @@ function getList() {
 				format: (value, row) => String(row.cluster_title || value || ''),
 				prefix: getClusterImagePrefix
 			},
-			{ label: 'Bench Group', fieldname: 'group_title', width: '350px' }
+			{ label: 'Bench', fieldname: 'group_title', width: '350px' }
 		],
 		filterControls
 	} satisfies List as List;
 }
 
-function getBenchTitleSuffix(row: Row) {
+export function getBenchTitleSuffix(row: Row) {
 	const ch: VNode[] = [];
 	if (row.inplace_update_docker_image) ch.push(getInPlaceUpdatesSuffix(row));
 	if (row.has_app_patch_applied) ch.push(getAppPatchSuffix(row));
@@ -177,7 +177,7 @@ function getInPlaceUpdatesSuffix(row: Row) {
 		'div',
 		{
 			title,
-			class: 'rounded-full bg-gray-100 p-1'
+			class: 'rounded-full bg-surface-gray-2 p-1'
 		},
 		h(icon('star', 'w-3 h-3'))
 	);
@@ -188,13 +188,13 @@ function getAppPatchSuffix(row: Row) {
 		'div',
 		{
 			title: 'Apps in this bench may have been patched',
-			class: 'rounded-full bg-gray-100 p-1'
+			class: 'rounded-full bg-surface-gray-2 p-1'
 		},
 		h(icon('hash', 'w-3 h-3'))
 	);
 }
 
-function getClusterImagePrefix(row: Row) {
+export function getClusterImagePrefix(row: Row) {
 	if (!row.cluster_image) return;
 
 	return h('img', {
@@ -204,7 +204,7 @@ function getClusterImagePrefix(row: Row) {
 	});
 }
 
-function filterControls() {
+export function filterControls() {
 	return [
 		{
 			type: 'select',
@@ -222,7 +222,7 @@ function filterControls() {
 		},
 		{
 			type: 'link',
-			label: 'Bench Group',
+			label: 'Bench',
 			fieldname: 'group',
 			options: {
 				doctype: 'Release Group'

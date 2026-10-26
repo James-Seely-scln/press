@@ -1,27 +1,13 @@
 import frappe
 
-from press.guards import role_guard
 from press.utils import get_current_team
 
 
 @frappe.whitelist()
-@role_guard.document(
-	document_type=lambda _: "Site",
-	inject_values=True,
-	should_throw=False,
-)
-@role_guard.document(
-	document_type=lambda _: "Release Group",
-	inject_values=True,
-	should_throw=False,
-)
 def get_notifications(
-	filters=None,
-	order_by="creation desc",
-	limit_start=None,
-	limit_page_length=None,
-	sites=None,
-	release_groups=None,
+	filters: dict | None = None,
+	limit_start=0,
+	limit_page_length=20,
 ):
 	if not filters:
 		filters = {}
@@ -47,35 +33,33 @@ def get_notifications(
 		.offset(limit_start)
 	)
 
-	resources = set()
-	if sites and isinstance(sites, list):
-		resources.update(sites)
-	if release_groups and isinstance(release_groups, list):
-		resources.update(release_groups)
-
-	if resources:
-		query = query.where(PressNotification.reference_name.isin(resources))
-
 	if filters.get("read") == "Unread":
 		query = query.where(PressNotification.read == 0)
+
+	if filters.get("type"):
+		query = query.where(PressNotification.type == filters["type"])
 
 	notifications = query.run(as_dict=True)
 
 	for notification in notifications:
-		if notification.document_type == "Deploy Candidate":
-			rg_name = frappe.db.get_value("Deploy Candidate", notification.document_name, "group")
-			notification.route = f"groups/{rg_name}/deploys/{notification.document_name}"
-		elif notification.document_type == "Agent Job":
-			site_name = frappe.db.get_value("Agent Job", notification.document_name, "site")
-			notification.route = (
-				f"sites/{site_name}/insights/jobs/{notification.document_name}" if site_name else None
-			)
-		elif notification.document_type == "Support Access":
-			notification.route = "access-requests"
-		else:
-			notification.route = None
+		assign_notification_route(notification)
 
 	return notifications
+
+
+def assign_notification_route(notification):
+	if notification.document_type == "Deploy Candidate Build":
+		rg_name = frappe.db.get_value("Deploy Candidate Build", notification.document_name, "group")
+		notification.route = f"groups/{rg_name}/deploys/{notification.document_name}"
+	elif notification.document_type == "Agent Job":
+		site_name = frappe.db.get_value("Agent Job", notification.document_name, "site")
+		notification.route = (
+			f"sites/{site_name}/insights/jobs/{notification.document_name}" if site_name else None
+		)
+	elif notification.document_type == "Support Access":
+		notification.route = "access-requests"
+	else:
+		notification.route = None
 
 
 @frappe.whitelist()
@@ -84,5 +68,10 @@ def mark_all_notifications_as_read():
 
 
 @frappe.whitelist()
-def get_unread_count():
-	return frappe.db.count("Press Notification", {"read": False, "team": get_current_team()})
+def get_unread_count(type: str | None = None):
+	filters = {"read": False, "team": get_current_team()}
+
+	if type:
+		filters["type"] = type
+
+	return frappe.db.count("Press Notification", filters)
