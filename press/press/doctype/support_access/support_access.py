@@ -4,6 +4,7 @@
 
 import frappe
 import frappe.utils
+from frappe import _
 from frappe.model.document import Document
 from frappe.query_builder import Criterion, JoinType
 from frappe.query_builder.functions import Count
@@ -23,7 +24,7 @@ class SupportAccess(Document):
 		from press.press.doctype.support_access_resource.support_access_resource import SupportAccessResource
 
 		access_allowed_till: DF.Datetime | None
-		allowed_for: DF.Literal["3", "6", "12", "24", "72"]
+		allowed_for: DF.Literal["3", "6", "12", "24", "72", "168"]
 		bench_ssh: DF.Check
 		login_as_administrator: DF.Check
 		reason: DF.SmallText | None
@@ -51,6 +52,19 @@ class SupportAccess(Document):
 		"bench_ssh",
 	)
 
+	dashboard_insert_fields = (
+		"reason",
+		"resources",
+		"login_as_administrator",
+		"site_domains",
+		"site_release_group",
+		"bench_ssh",
+	)
+
+	# What the target team answers a request with. `validate_status_change` and
+	# `validate_validity_change` decide whether this caller may.
+	dashboard_editable_fields = ("allowed_for", "status")
+
 	def get_list_query(query, filters: dict | None, **args):
 		filters = filters or {}
 		team = get_current_team()
@@ -62,6 +76,7 @@ class SupportAccess(Document):
 			.select(Count(AccessResource.name).as_("resource_count"))
 			.groupby(Access.name)
 			.select(AccessResource.document_name.as_("resource_name"))
+			.where(Criterion.any([Access.requested_team == team, Access.target_team == team]))
 		)
 		conditions = []
 		match filters.get("source"):
@@ -161,6 +176,8 @@ class SupportAccess(Document):
 		Returns the possible target statuses for the current user.
 		"""
 		current_team = get_current_team()
+		if self.flags.ignore_permissions:
+			return ["Pending", "Accepted", "Rejected", "Forfeited", "Revoked"]
 		if self.target_team == current_team:
 			return ["Accepted", "Rejected", "Revoked"]
 		if self.requested_team == current_team:
@@ -191,13 +208,17 @@ class SupportAccess(Document):
 		if not self.is_valid_status_transition(status_before, status_after):
 			frappe.throw(f"Cannot change status from {status_before} to {status_after}")
 		if status_after not in self.target_statuses:
-			frappe.throw("You are not allowed to set this status")
+			frappe.throw(
+				"You don't have permission to set this status on the support access request. Please ask a team admin to do this."
+			)
 
 	def validate_expiry(self):
 		if self.access_expired:
-			frappe.throw("Access expiry must be in the future")
+			frappe.throw("The access expiry must be in the future. Please pick a later date and time.")
 		if self.status == "Pending" and self.access_allowed_till:
-			frappe.throw("Pending requests cannot have access expiry")
+			frappe.throw(
+				"A pending request can't have an access expiry yet. Please approve the request first, then set when access should end."
+			)
 
 	def validate_target_team(self):
 		teams = set()
@@ -205,8 +226,19 @@ class SupportAccess(Document):
 			team = frappe.get_value(resource.document_type, resource.document_name, "team")
 			teams.add(team)
 		if len(teams) != 1:
-			frappe.throw("Resources must belong to the same team")
+			frappe.throw(
+				"All resources in a support access request must belong to the same team. Please create separate requests for each team's resources."
+			)
 		self.target_team = teams.pop()
+
+	def validate_validity_change(self):
+		is_target_team = get_current_team() == self.target_team
+		if self.has_value_changed("allowed_for") and not is_target_team:
+			message = _("You are not allowed to change the validity period.")
+			frappe.throw(message, frappe.ValidationError)
+		if self.status != "Pending":
+			message = _("Cannot change validity period of a processed request.")
+			frappe.throw(message, frappe.ValidationError)
 
 	def after_insert(self):
 		self.notify_on_request()
@@ -292,3 +324,11 @@ class SupportAccess(Document):
 				"team": self.target_team,
 			},
 		)
+
+
+def has_permission(doc, user=None, permission_type=None) -> bool:
+	if doc.is_new():
+		return True
+	if get_current_team() in (doc.requested_team, doc.target_team):
+		return True
+	return False
