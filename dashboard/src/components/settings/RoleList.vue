@@ -25,7 +25,7 @@
 				}"
 			>
 				<div
-					class="px-5 py-4 space-y-3 rounded shadow cursor-pointer hover:shadow-lg transition"
+					class="p-4 space-y-3 rounded shadow dark:border cursor-pointer hover:shadow-lg transition"
 				>
 					<div class="font-medium h-6">{{ role.title }}</div>
 					<div class="h-6 flex flex-wrap gap-1">
@@ -46,12 +46,12 @@
 								:placement="'top'"
 							>
 								<Avatar
-									:shape="'circle'"
+									shape="circle"
 									:ref_for="true"
 									:image="user.user_image"
 									:label="user.full_name"
 									size="lg"
-									class="border border-white"
+									class="border border-transparent"
 								/>
 							</Tooltip>
 							<div
@@ -97,11 +97,22 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue';
-import { createListResource, createResource } from 'frappe-ui';
-import RoleCreateDialog from './RoleCreateDialog.vue';
+import { createListResource, createResource } from 'frappe-ui'
+import { onMounted, ref } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import RoleCreateDialog from './RoleCreateDialog.vue'
 
-const showCreateDialog = ref(false);
+const showCreateDialog = ref(false)
+
+const route = useRoute()
+const router = useRouter()
+
+onMounted(() => {
+	if (route.query.createRole === 'true') {
+		showCreateDialog.value = true
+		router.replace({ query: {} })
+	}
+})
 
 const roles = createListResource({
 	doctype: 'Press Role',
@@ -118,16 +129,16 @@ const roles = createListResource({
 	sortBy: 'title',
 	sortOrder: 'asc',
 	auto: true,
-});
+})
 
 const insert = createResource({
 	url: 'press.api.client.insert',
 	auto: false,
 	onSuccess: () => {
-		roles.reload();
-		showCreateDialog.value = false;
+		roles.reload()
+		showCreateDialog.value = false
 	},
-});
+})
 
 const permissions = (role) => {
 	return [
@@ -156,6 +167,6 @@ const permissions = (role) => {
 			label: 'Webhook',
 			color: 'green',
 		},
-	].filter((permission) => role[permission.key]);
-};
+	].filter((permission) => role[permission.key])
+}
 </script>
