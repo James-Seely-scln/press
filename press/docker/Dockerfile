@@ -9,7 +9,7 @@ ENV OPENBLAS_NUM_THREADS 1
 ENV MKL_NUM_THREADS 1
 
 # Install essential packages
-RUN --mount=type=cache,target=/var/cache/apt apt-get update \
+RUN --mount=type=cache,sharing=locked,target=/var/cache/apt apt-get update \
   && apt-get install --yes --no-install-suggests --no-install-recommends \
   # Essentials
   build-essential \
@@ -40,7 +40,29 @@ RUN --mount=type=cache,target=/var/cache/apt apt-get update \
   libpangoft2-1.0-0 \
   libpangocairo-1.0-0 \
   # Chromium and dependencies
+  # Everything headless_shell links against (see deb.deps in the
+  # chrome-headless-shell archive). Sorted so it stays auditable.
   chromium-browser \
+  fonts-liberation \
+  libasound2 \
+  libatk-bridge2.0-0 \
+  libatk1.0-0 \
+  libatspi2.0-0 \
+  libdbus-1-3 \
+  libexpat1 \
+  libgbm1 \
+  libglib2.0-0 \
+  libgtk-3-0 \
+  libnspr4 \
+  libnss3 \
+  libudev1 \
+  libvulkan1 \
+  libxcomposite1 \
+  libxdamage1 \
+  libxfixes3 \
+  libxkbcommon0 \
+  libxrandr2 \
+  xdg-utils \
   # wkhtmltopdf dependencies
   ca-certificates \
   fontconfig \
@@ -64,7 +86,7 @@ RUN --mount=type=cache,target=/var/cache/apt apt-get update \
 COPY --chown=root:root supervisord.conf /etc/supervisor/supervisord.conf
 
 # Install Redis from PPA
-RUN --mount=type=cache,target=/var/cache/apt curl -fsSL https://packages.redis.io/gpg | gpg --dearmor -o /usr/share/keyrings/redis-archive-keyring.gpg \
+RUN --mount=type=cache,sharing=locked,target=/var/cache/apt curl -fsSL https://packages.redis.io/gpg | gpg --dearmor -o /usr/share/keyrings/redis-archive-keyring.gpg \
   && echo "deb [signed-by=/usr/share/keyrings/redis-archive-keyring.gpg] https://packages.redis.io/deb jammy main" | tee /etc/apt/sources.list.d/redis.list \
   && apt-get update \
   && apt-get install --yes --no-install-suggests --no-install-recommends \
@@ -73,15 +95,15 @@ RUN --mount=type=cache,target=/var/cache/apt curl -fsSL https://packages.redis.i
 
 # Install Python from DeadSnakes PPA
 ENV {{ doc.get_dependency_version("python", True) }}
-RUN --mount=type=cache,target=/var/cache/apt add-apt-repository ppa:deadsnakes/ppa \
+RUN --mount=type=cache,sharing=locked,target=/var/cache/apt add-apt-repository ppa:deadsnakes/ppa \
   && apt-get update \
   && apt-get install --yes --no-install-suggests --no-install-recommends \
-    python${PYTHON_VERSION} \
-    python${PYTHON_VERSION}-dev \
-    {% if not remove_distutils -%}
-    python${PYTHON_VERSION}-distutils \
-    {%- endif %}
-    python${PYTHON_VERSION}-venv \
+  python${PYTHON_VERSION} \
+  python${PYTHON_VERSION}-dev \
+  {% if not remove_distutils -%}
+python${PYTHON_VERSION}-distutils \
+  {%- endif %}
+python${PYTHON_VERSION}-venv \
   && rm -rf /var/lib/apt/lists/* \
   `#stage-pre-python`
 
@@ -90,33 +112,33 @@ ENV {{ doc.get_dependency_version("wkhtmltopdf", True) }}
 
 
 {% if is_arm_build %}
-  # ARM setup (0.12.5) & (0.12.6)
-  {% if doc.get_dependency_version("wkhtmltopdf") == '0.12.5' %}
-  RUN wget https://github.com/Aradhya-Tripathi/wkhtmltopdf/releases/download/0.12.5-arm/wkhtmltox_0.12.5-1.jammy_arm64.deb \
-    && dpkg -i wkhtmltox_0.12.5-1.jammy_arm64.deb \
-    && rm wkhtmltox_0.12.5-1.jammy_arm64.deb \
-    `#stage-pre-wkhtmltopdf`
-  {% endif %}
+# ARM setup (0.12.5) & (0.12.6)
+{% if doc.get_dependency_version("wkhtmltopdf") == '0.12.5' %}
+RUN wget https://github.com/Aradhya-Tripathi/wkhtmltopdf/releases/download/0.12.5-arm/wkhtmltox_0.12.5-1.jammy_arm64.deb \
+  && dpkg -i wkhtmltox_0.12.5-1.jammy_arm64.deb \
+  && rm wkhtmltox_0.12.5-1.jammy_arm64.deb \
+  `#stage-pre-wkhtmltopdf`
+{% endif %}
 
-  {% if doc.get_dependency_version("wkhtmltopdf") == '0.12.6' %}
-  RUN wget https://github.com/wkhtmltopdf/packaging/releases/download/0.12.6.1-2/wkhtmltox_0.12.6.1-2.jammy_arm64.deb  \
-    && dpkg -i wkhtmltox_0.12.6.1-2.jammy_arm64.deb \
-    && rm wkhtmltox_0.12.6.1-2.jammy_arm64.deb \
-    `#stage-pre-wkhtmltopdf`
-  {% endif %}
+{% if doc.get_dependency_version("wkhtmltopdf") == '0.12.6' %}
+RUN wget https://github.com/wkhtmltopdf/packaging/releases/download/0.12.6.1-2/wkhtmltox_0.12.6.1-2.jammy_arm64.deb  \
+  && dpkg -i wkhtmltox_0.12.6.1-2.jammy_arm64.deb \
+  && rm wkhtmltox_0.12.6.1-2.jammy_arm64.deb \
+  `#stage-pre-wkhtmltopdf`
+{% endif %}
 {% else %}
-  # Intel setup
-  {% if doc.get_dependency_version("wkhtmltopdf") == '0.12.6' %}
-  RUN wget https://github.com/wkhtmltopdf/packaging/releases/download/0.12.6.1-2/wkhtmltox_0.12.6.1-2.jammy_amd64.deb  \
-    && dpkg -i wkhtmltox_0.12.6.1-2.jammy_amd64.deb \
-    && rm wkhtmltox_0.12.6.1-2.jammy_amd64.deb \
-    `#stage-pre-wkhtmltopdf`
-  {% elif doc.get_dependency_version("wkhtmltopdf") == '0.12.5' %}
-  RUN wget https://github.com/Aradhya-Tripathi/wkhtmltopdf/releases/download/0.12.5/wkhtmltox_0.12.5-1.jammy_amd64.deb  \
-    && dpkg -i wkhtmltox_0.12.5-1.jammy_amd64.deb \
-    && rm wkhtmltox_0.12.5-1.jammy_amd64.deb \
-    `#stage-pre-wkhtmltopdf`
-  {% endif %}
+# Intel setup
+{% if doc.get_dependency_version("wkhtmltopdf") == '0.12.6' %}
+RUN wget https://github.com/wkhtmltopdf/packaging/releases/download/0.12.6.1-2/wkhtmltox_0.12.6.1-2.jammy_amd64.deb  \
+  && dpkg -i wkhtmltox_0.12.6.1-2.jammy_amd64.deb \
+  && rm wkhtmltox_0.12.6.1-2.jammy_amd64.deb \
+  `#stage-pre-wkhtmltopdf`
+{% elif doc.get_dependency_version("wkhtmltopdf") == '0.12.5' %}
+RUN wget https://github.com/Aradhya-Tripathi/wkhtmltopdf/releases/download/0.12.5/wkhtmltox_0.12.5-1.jammy_amd64.deb  \
+  && dpkg -i wkhtmltox_0.12.5-1.jammy_amd64.deb \
+  && rm wkhtmltox_0.12.5-1.jammy_amd64.deb \
+  `#stage-pre-wkhtmltopdf`
+{% endif %}
 {% endif %}
 
 {% if doc.is_code_server_enabled %}
@@ -143,7 +165,7 @@ RUN useradd -ms /bin/bash frappe
 
 # Run before install scripts
 {% if p.prerequisites %}
-RUN --mount=type=cache,target=/var/cache/apt {{ p.prerequisites }} \
+RUN --mount=type=cache,sharing=locked,target=/var/cache/apt {{ p.prerequisites }} \
   `#stage-pre_before-{{ p.package }}`
 {% endif %}
 
@@ -162,7 +184,7 @@ RUN apt-get update \
 
 # Run after install scripts
 {% if p.after_install %}
-RUN  --mount=type=cache,target=/var/cache/apt {{ p.after_install }} \
+RUN  --mount=type=cache,sharing=locked,target=/var/cache/apt {{ p.after_install }} \
   && rm -rf /var/lib/apt/lists/* \
   `#stage-pre_after-{{ p.package }}`
 {% endif %}
@@ -198,7 +220,6 @@ ENV PATH "$PATH:/home/frappe/.nvm/versions/node/v${NODE_VERSION}/bin"
 # Install Yarn
 RUN --mount=type=cache,target=/home/frappe/.cache,uid=1000,gid=1000 npm install -g yarn `#stage-pre-yarn`
 
-
 # Install Bench
 ENV PATH "$PATH:/home/frappe/.local/bin"
 
@@ -228,6 +249,11 @@ RUN `#stage-bench-env`
 ENV {{v.key}} {{ v.value }}
 {% endfor %}
 
+# Install Boto and Requests for Asset store access
+RUN --mount=type=cache,target=/home/frappe/.cache,uid=1000,gid=1000 \
+  python${PYTHON_VERSION} -m pip install boto3 botocore requests \
+  `#stage-pre-Configure Asset Store`
+
 # Install Frappe app
 RUN --mount=type=cache,sharing=locked,target=/home/frappe/.cache,uid=1000,gid=1000 --mount=type=bind,source=apps/frappe,target=/home/frappe/context/apps/frappe bench init --python /usr/bin/python${PYTHON_VERSION} --no-backups --frappe-path file:///home/frappe/context/apps/frappe frappe-bench `#stage-apps-frappe`
 WORKDIR /home/frappe/frappe-bench
@@ -239,18 +265,39 @@ COPY --chown=frappe:frappe redis /home/frappe/frappe-bench/redis
 COPY --chown=frappe:frappe .vimrc /home/frappe/.vimrc
 COPY --chown=frappe:frappe common_site_config.json /home/frappe/frappe-bench/sites/common_site_config.json
 
+# Prebundle headless Chromium for the Chrome-based PDF generator (frappe.utils.chromium)
+RUN --mount=type=cache,sharing=locked,id=chromium-{% if is_arm_build %}arm64{% else %}x86_64{% endif %},target=/home/frappe/chromium-cache,uid=1000,gid=1000 \
+  if [ -n "$(ls -A /home/frappe/chromium-cache 2>/dev/null)" ]; then \
+  mkdir -p /home/frappe/frappe-bench/chromium \
+  && cp -a /home/frappe/chromium-cache/. /home/frappe/frappe-bench/chromium/; \
+  elif bench setup-chrome --help > /dev/null 2>&1; then \
+  bench setup-chrome \
+  && cp -a /home/frappe/frappe-bench/chromium/. /home/frappe/chromium-cache/; \
+  else echo "bench setup-chrome unavailable on this Frappe version; skipping Chromium prebundle"; fi; \
+  `#stage-setup-chromium`
+
 # Install other apps
 {% for app in doc.apps %}
-{% if app.app != "frappe" %}
+{% if app.app != "frappe"%}
 
+
+{% if app.use_cached and use_asset_store %}
+RUN --mount=type=bind,source=apps/{{ app.app }},target=/home/frappe/context/apps/{{ app.app }} \
+  --mount=type=secret,id=build_token,mode=0444 \
+  BUILD_TOKEN="$(cat /run/secrets/build_token)" && python${PYTHON_VERSION} /usr/local/bin/get_cached_app.py \
+  {{ app.app }} \
+  {{ app.hash }} \
+  "$BUILD_TOKEN" \
+  {{ site_url }} \
+  {{ upload_assets }} \
+  `#stage-apps-{{ app.app }}`
+{% else %}
 RUN --mount=type=cache,sharing=locked,target=/home/frappe/.cache,uid=1000,gid=1000 \
   --mount=type=bind,source=apps/{{ app.app }},target=/home/frappe/context/apps/{{ app.app }} \
   bench get-app file:///home/frappe/context/apps/{{ app.app }} \
-    {% if app.use_cached %}
-    # Bench get-app flags to use get-app cache
-    --cache-key {{ app.hash }} {% if doc.compress_app_cache %}--compress-artifacts{% endif %} \
-    {% endif %}
   `#stage-apps-{{ app.app }}`
+{% endif %}
+
 
 {% endif %}
 {% endfor %}

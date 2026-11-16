@@ -2,19 +2,16 @@
 # For license information, please see license.txt
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
 import frappe
 from frappe import _
 from frappe.model.document import Document
 from frappe.query_builder.functions import Count
 
 from press.api.client import dashboard_whitelist
-from press.guards import team_guard
-from press.utils import get_current_team
-
-if TYPE_CHECKING:
-	from press.press.doctype.team.team import Team
+from press.guards import role_guard, team_guard
+from press.overrides import get_permission_query_conditions_for_doctype
+from press.press.doctype.team.team_members import PERMISSION_FIELDS
+from press.utils import get_current_team, is_admin_user, is_team_owner
 
 
 class PressRole(Document):
@@ -30,6 +27,9 @@ class PressRole(Document):
 		from press.press.doctype.press_role_user.press_role_user import PressRoleUser
 
 		admin_access: DF.Check
+		all_release_groups: DF.Check
+		all_servers: DF.Check
+		all_sites: DF.Check
 		allow_apps: DF.Check
 		allow_bench_creation: DF.Check
 		allow_billing: DF.Check
@@ -49,6 +49,9 @@ class PressRole(Document):
 
 	dashboard_fields = (
 		"admin_access",
+		"all_servers",
+		"all_sites",
+		"all_release_groups",
 		"allow_apps",
 		"allow_bench_creation",
 		"allow_billing",
@@ -56,9 +59,11 @@ class PressRole(Document):
 		"allow_customer",
 		"allow_dashboard",
 		"allow_leads",
+		"allow_local_payment",
 		"allow_partner",
 		"allow_server_creation",
 		"allow_site_creation",
+		"allow_local_payment",
 		"allow_webhook_configuration",
 		"resources",
 		"team",
@@ -66,9 +71,51 @@ class PressRole(Document):
 		"users",
 	)
 
+	dashboard_insert_fields = (
+		"title",
+		"users",
+		"resources",
+	)
+
+	# The permission toggles the role configuration dialog flips. `resources`
+	# and `users` change through add_resource/add_user, which check the caller.
+	dashboard_editable_fields = (
+		"admin_access",
+		"all_release_groups",
+		"all_servers",
+		"all_sites",
+		"allow_apps",
+		"allow_bench_creation",
+		"allow_billing",
+		"allow_contribution",
+		"allow_customer",
+		"allow_dashboard",
+		"allow_leads",
+		"allow_local_payment",
+		"allow_partner",
+		"allow_server_creation",
+		"allow_site_creation",
+		"allow_webhook_configuration",
+	)
+
 	@team_guard.only_admin()
 	def validate(self):
 		self.validate_duplicate_title()
+
+	def reload_for_update(self):
+		"""
+		Re-read the role under a row lock.
+
+		Every dashboard edit rewrites the whole role document. Two of them in
+		flight at once — two admins, or a second click while the first request
+		is still running — make the later save fail with
+		`TimestampMismatchError`, because the row was committed after this
+		request read it. `FOR UPDATE` waits for the earlier write and returns
+		the committed row, so the second edit applies on top of the first
+		instead of erroring out.
+		"""
+		self.flags.for_update = True
+		self.reload()
 
 	def validate_duplicate_title(self):
 		exists = frappe.db.exists({"doctype": "Press Role", "title": self.title, "team": self.team})
@@ -76,61 +123,64 @@ class PressRole(Document):
 			message = _("Role with title {0} already exists in this team").format(self.title)
 			frappe.throw(message, frappe.DuplicateEntryError)
 
-	def add_press_admin_role(self, user):
-		user = frappe.get_doc("User", user)
-		user.append_roles("Press Admin")
-		user.save(ignore_permissions=True)
-
-	def remove_press_admin_role(self, user):
-		if frappe.db.exists("Team", {"enabled": 1, "user": user}):
-			return
-		user = frappe.get_doc("User", user)
-		existing_roles = {d.role: d for d in user.get("roles")}
-		if "Press Admin" in existing_roles:
-			user.get("roles").remove(existing_roles["Press Admin"])
-			user.save(ignore_permissions=True)
-
 	@dashboard_whitelist()
 	@team_guard.only_admin(skip=lambda _, args: args.get("skip_validations", False))
 	@team_guard.only_member(
 		user=lambda _, args: str(args.get("user")),
 		error_message=_("User is not a member of the team"),
+		skip=lambda _, args: args.get("skip_validations", False),
 	)
 	def add_user(self, user, skip_validations=False):
+		self.reload_for_update()
 		user_dict = {"user": user}
 		if self.get("users", user_dict):
 			message = _("{0} already belongs to {1}").format(user, self.title)
 			frappe.throw(message, frappe.ValidationError)
 		self.append("users", user_dict)
 		self.save()
-		if self.admin_access or self.allow_billing:
-			self.add_press_admin_role(user)
 
 	@dashboard_whitelist()
 	@team_guard.only_admin()
 	def remove_user(self, user):
+		self.reload_for_update()
 		users = self.get("users", {"user": user})
 		if not users:
 			message = _("User {0} does not belong to {1}").format(user, self.title)
 			frappe.throw(message, frappe.ValidationError)
 		self.remove(users.pop())
 		self.save()
-		if self.admin_access or self.allow_billing:
-			self.remove_press_admin_role(user)
 
 	@dashboard_whitelist()
-	@team_guard.only_admin(skip=lambda _, args: args.get("skip_validations", False))
-	def add_resource(self, document_type: str, document_name: str):
-		resource_dict = {"document_type": document_type, "document_name": document_name}
-		if self.get("resources", resource_dict):
-			message = _("{0} already belongs to {1}").format(document_name, self.title)
-			frappe.throw(message, frappe.ValidationError)
-		self.append("resources", resource_dict)
+	@team_guard.only_admin()
+	def add_resource(self, resources: list[dict[str, str]]):
+		self.reload_for_update()
+		existing = {(row.document_type, row.document_name) for row in self.get("resources")}
+		for resource in resources:
+			document_type = resource["document_type"]
+			document_name = resource["document_name"]
+			if (document_type, document_name) in existing:
+				message = _("{0} already belongs to {1}").format(document_name, self.title)
+				frappe.throw(message, frappe.ValidationError)
+
+			document_team = frappe.db.get_value(document_type, document_name, "team")
+			if document_team is None:
+				frappe.throw(
+					_("Document {0} does not exist").format(document_name),
+					frappe.DoesNotExistError,
+				)
+			if document_team != self.team:
+				frappe.throw(
+					_("Document {0} is not associated with this team").format(document_name),
+					frappe.ValidationError,
+				)
+			self.append("resources", {"document_type": document_type, "document_name": document_name})
+			existing.add((document_type, document_name))
 		self.save()
 
 	@dashboard_whitelist()
 	@team_guard.only_admin()
 	def remove_resource(self, document_type: str, document_name: str):
+		self.reload_for_update()
 		resources = self.get("resources", {"document_type": document_type, "document_name": document_name})
 		if not resources:
 			message = _("Resource {0} does not belong to {1}").format(document_name, self.title)
@@ -139,22 +189,90 @@ class PressRole(Document):
 		self.save()
 
 	@dashboard_whitelist()
-	@team_guard.only_owner()
+	@team_guard.only_admin()
+	def set_permission(self, fieldname: str, value: int):
+		self.reload_for_update()
+		if fieldname not in PERMISSION_FIELDS:
+			frappe.throw(_("Invalid permission field: {0}").format(fieldname))
+		setattr(self, fieldname, value)
+		self.save()
+
+	@dashboard_whitelist()
+	@team_guard.only_admin()
 	def delete(self, *_args, **_kwargs):
 		return super().delete()
 
 	def on_trash(self) -> None:
 		frappe.db.delete("Account Request Press Role", {"press_role": self.name})
+		# Invites record the selected role in Account Request.press_role and keep
+		# it after acceptance, so the link must be unset for deletion to pass the
+		# link check.
+		frappe.db.set_value("Account Request", {"press_role": self.name}, "press_role", None)
+
+	def get_doc(self, doc):
+		doc["resources"] = self.get_flat_resources(doc["resources"])
+		doc["users"] = self.get_flat_users(doc.get("users", []))
+
+	def get_flat_resources(self, resources):
+		titled_types = ("Release Group", "Server")
+		names_by_type = {}
+		for resource in resources:
+			if resource.document_type in titled_types:
+				names_by_type.setdefault(resource.document_type, set()).add(resource.document_name)
+
+		titles = {}
+		for document_type, names in names_by_type.items():
+			rows = frappe.get_all(
+				document_type, filters={"name": ("in", list(names))}, fields=["name", "title"]
+			)
+			titles.update({(document_type, row.name): row.title for row in rows})
+
+		flat_resources = []
+		for resource in resources:
+			row = resource.as_dict()
+			key = (row["document_type"], row["document_name"])
+			row["document_title"] = titles.get(key, row["document_name"])
+			flat_resources.append(row)
+		return flat_resources
+
+	def get_flat_users(self, users):
+		usernames = [user.user for user in users]
+		images = {}
+		if usernames:
+			rows = frappe.get_all("User", filters={"name": ("in", usernames)}, fields=["name", "user_image"])
+			images = {row.name: row.user_image for row in rows}
+
+		flat_users = []
+		for user in users:
+			row = user.as_dict()
+			row["user_image"] = images.get(row["user"])
+			flat_users.append(row)
+		return flat_users
+
+
+get_permission_query_conditions = get_permission_query_conditions_for_doctype("Press Role")
+
+
+def has_permission(doc, ptype, user):
+	"""
+	Only team owners and admins can modify Press Roles. Other team members
+	can read roles but cannot create, update, or delete them.
+	"""
+	if ptype in ("write", "delete", "create") and role_guard.is_restricted():
+		return False
+
+	return True
 
 
 def create_user_resource(document: Document, _):
 	user = frappe.session.user
-	team: Team = get_current_team(get_doc=True)
+	team = get_current_team()
+
 	roles_enabled = bool(
 		frappe.db.exists(
 			{
 				"doctype": "Press Role",
-				"team": team.name,
+				"team": team,
 			}
 		)
 	)
@@ -163,16 +281,31 @@ def create_user_resource(document: Document, _):
 		(not user)
 		or (not roles_enabled)
 		or (not user_has_roles())
-		or team.is_team_owner()
-		or team.is_admin_user()
+		or is_team_owner(team)
+		or is_admin_user(team)
 	):
+		return
+
+	title = user + " / " + document.name
+
+	role_exists = bool(
+		frappe.db.exists(
+			{
+				"doctype": "Press Role",
+				"team": team,
+				"title": title,
+			}
+		)
+	)
+
+	if role_exists:
 		return
 
 	frappe.get_doc(
 		{
 			"doctype": "Press Role",
-			"title": user + " / " + document.name,
-			"team": team.name,
+			"title": title,
+			"team": team,
 			"users": [
 				{
 					"user": user,

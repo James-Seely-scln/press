@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+from unittest import mock
 from unittest.mock import MagicMock, Mock, patch
 
 import frappe
@@ -14,9 +16,10 @@ from press.press.doctype.ansible_play.test_ansible_play import create_test_ansib
 from press.press.doctype.cluster.cluster import Cluster
 from press.press.doctype.cluster.test_cluster import create_test_cluster
 from press.press.doctype.database_server.database_server import DatabaseServer
+from press.press.doctype.press_job.jobs.resize_server import ResizeServerJob
 from press.press.doctype.proxy_server.test_proxy_server import create_test_proxy_server
 from press.press.doctype.server.server import BaseServer
-from press.press.doctype.team.test_team import create_test_press_admin_team
+from press.press.doctype.team.test_team import allow_server_creation, create_test_press_admin_team
 from press.press.doctype.virtual_machine.virtual_machine import VirtualMachine
 from press.press.doctype.virtual_machine_image.test_virtual_machine_image import (
 	create_test_virtual_machine_image,
@@ -25,7 +28,10 @@ from press.press.doctype.virtual_machine_image.virtual_machine_image import (
 	VirtualMachineImage,
 )
 from press.runner import Ansible
-from press.utils.test import foreground_enqueue_doc
+from press.utils.test import foreground_enqueue_doc_with_user
+
+if TYPE_CHECKING:
+	from press.press.doctype.press_job.press_job import PressJob
 
 
 def create_test_server_plan(
@@ -59,61 +65,76 @@ def successful_provision(self: VirtualMachine):
 	self.save()
 
 
-def available_check_machine_availability(self: Cluster, machine_type: str):
+def available_check_machine_availability(self: Cluster, machine_type: str, instance_id: str | None = None):
 	return True
 
 
-def unavailable_check_machine_availability(self: Cluster, machine_type: str):
+def unavailable_check_machine_availability(self: Cluster, machine_type: str, instance_id: str | None = None):
 	return False
 
 
-def successful_sync(self: VirtualMachine):
+def successful_sync_with_memory(memory):
+	def _sync(self):
+		return successful_sync(self, memory)
+
+	return _sync
+
+
+def successful_sync(self: VirtualMachine, memory: int | None = None):
 	self.status = "Running"
 	if not self.volumes:
 		self.append(
 			"volumes", {"volume_id": "vol-123456", "size": 20, "volume_type": "gp2", "device": "/dev/sda1"}
 		)
+	if memory:
+		self.ram = memory
 	self.save()
 	self.update_servers()
 
 
-def successful_ping_ansible(self: BaseServer):
-	create_test_ansible_play("Ping Server", "ping.yml", self.doctype, self.name)
+def successful_ping_ansible(self: BaseServer, *args, **kwargs):
+	return create_test_ansible_play("Ping Server", "ping.yml", self.doctype, self.name)
 
 
-def successful_upgrade_mariadb(self: DatabaseServer):
-	create_test_ansible_play("Upgrade MariaDB", "upgrade_mariadb.yml", self.doctype, self.name)
+def successful_upgrade_mariadb(self: DatabaseServer, *args, **kwargs):
+	return create_test_ansible_play("Upgrade MariaDB", "upgrade_mariadb.yml", self.doctype, self.name)
 
 
-def successful_upgrade_mariadb_patched(self: DatabaseServer):
-	create_test_ansible_play(
+def successful_upgrade_mariadb_patched(self: DatabaseServer, *args, **kwargs):
+	return create_test_ansible_play(
 		"Upgrade MariaDB Patched", "upgrade_mariadb_patched.yml", self.doctype, self.name
 	)
 
 
-def successful_tls_certificate(self: BaseServer):
-	create_test_ansible_play("Setup TLS Certificates", "tls.yml", self.doctype, self.name)
+def successful_tls_certificate(self: BaseServer, *args, **kwargs):
+	return create_test_ansible_play("Setup TLS Certificates", "tls.yml", self.doctype, self.name)
 
 
-def successful_update_agent_ansible(self: BaseServer):
-	create_test_ansible_play("Update Agent", "update_agent.yml", self.doctype, self.name)
+def successful_update_agent_ansible(self: BaseServer, *args, **kwargs):
+	return create_test_ansible_play("Update Agent", "update_agent.yml", self.doctype, self.name)
 
 
-def successful_wait_for_cloud_init(self: BaseServer):
-	create_test_ansible_play(
+def successful_wait_for_cloud_init(self: BaseServer, *args, **kwargs):
+	return create_test_ansible_play(
 		"Wait for Cloud Init to finish", "wait_for_cloud_init.yml", self.doctype, self.name
 	)
 
 
 @patch.object(VirtualMachineImage, "client", new=MagicMock())
 @patch.object(VirtualMachine, "client", new=MagicMock())
+@patch.object(VirtualMachine, "provision", new=successful_provision)
+@patch.object(VirtualMachine, "sync", new=successful_sync)
 @patch.object(Ansible, "run", new=Mock())
 @patch.object(BaseServer, "ping_ansible", new=successful_ping_ansible)
 @patch.object(DatabaseServer, "upgrade_mariadb", new=successful_upgrade_mariadb)
-@patch.object(DatabaseServer, "upgrade_mariadb_patched", new=successful_upgrade_mariadb_patched)
+@patch.object(DatabaseServer, "_upgrade_mariadb", new=successful_upgrade_mariadb)
+@patch.object(DatabaseServer, "upgrade_mariadb_patched", new=successful_upgrade_mariadb)
+@patch.object(DatabaseServer, "_upgrade_mariadb_patched", new=successful_upgrade_mariadb_patched)
 @patch.object(BaseServer, "wait_for_cloud_init", new=successful_wait_for_cloud_init)
+@patch.object(BaseServer, "_wait_for_cloud_init", new=successful_wait_for_cloud_init)
 @patch.object(BaseServer, "update_tls_certificate", new=successful_tls_certificate)
 @patch.object(BaseServer, "update_agent_ansible", new=successful_update_agent_ansible)
+@patch.object(BaseServer, "_update_agent_ansible", new=successful_update_agent_ansible)
 @patch.object(Cluster, "check_machine_availability", new=available_check_machine_availability)
 class TestAPIServer(FrappeTestCase):
 	@patch.object(Cluster, "provision_on_aws_ec2", new=Mock())
@@ -121,6 +142,7 @@ class TestAPIServer(FrappeTestCase):
 		super().setUp()
 
 		self.team = create_test_press_admin_team()
+		allow_server_creation(self.team)
 
 		self.app_plan = create_test_server_plan("Server")
 		self.app_plan.db_set("memory", 1024)
@@ -140,12 +162,13 @@ class TestAPIServer(FrappeTestCase):
 		create_test_virtual_machine_image(
 			cluster=self.cluster, series="f"
 		)  # call from here and not setup, so mocks work
+
 		frappe.set_user(self.team.user)
 
-		servers_before = self._get_doc_count("Server", "Pending", self.team.name)
-		db_servers_before = self._get_doc_count("Database Server", "Pending", self.team.name)
+		servers_before = self._get_doc_count("Server", "Active", self.team.name)
+		db_servers_before = self._get_doc_count("Database Server", "Active", self.team.name)
 
-		new(
+		response = new(
 			{
 				"cluster": self.cluster.name,
 				"db_plan": self.db_plan.name,
@@ -154,15 +177,27 @@ class TestAPIServer(FrappeTestCase):
 			}
 		)
 
-		servers_after = self._get_doc_count("Server", "Pending", self.team.name)
-		db_servers_after = self._get_doc_count("Database Server", "Pending", self.team.name)
+		server_name = response["server"]
+		database_server_name = frappe.db.get_value("Server", server_name, "database_server")
+
+		create_app_server_press_job: PressJob = frappe.get_last_doc(
+			"Press Job", {"server_type": "Server", "server": server_name}
+		)
+		create_db_server_press_job: PressJob = frappe.get_last_doc(
+			"Press Job", {"server_type": "Database Server", "server": database_server_name}
+		)
+		self.assertEqual(create_app_server_press_job.status, "Success")
+		self.assertEqual(create_db_server_press_job.status, "Success")
+
+		servers_after = self._get_doc_count("Server", "Active", self.team.name)
+		db_servers_after = self._get_doc_count("Database Server", "Active", self.team.name)
 
 		self.assertEqual(servers_before + 1, servers_after)
 		self.assertEqual(db_servers_before + 1, db_servers_after)
 
 	@patch(
 		"press.press.doctype.press_job.press_job.frappe.enqueue_doc",
-		new=foreground_enqueue_doc,
+		new=foreground_enqueue_doc_with_user("Administrator"),
 	)
 	@patch.object(VirtualMachine, "provision", new=successful_provision)
 	@patch.object(VirtualMachine, "sync", new=successful_sync)
@@ -193,7 +228,7 @@ class TestAPIServer(FrappeTestCase):
 
 	@patch(
 		"press.press.doctype.press_job.press_job.frappe.enqueue_doc",
-		new=foreground_enqueue_doc,
+		new=foreground_enqueue_doc_with_user("Administrator"),
 	)
 	@patch.object(VirtualMachine, "provision", new=successful_provision)
 	@patch.object(VirtualMachine, "sync", new=successful_sync)
@@ -230,8 +265,42 @@ class TestAPIServer(FrappeTestCase):
 		self.assertTrue(db_subscription.enabled)
 		self.assertEqual(db_subscription.plan, self.db_plan.name)
 
+	def _new_server(self):
+		return new(
+			{
+				"cluster": self.cluster.name,
+				"db_plan": self.db_plan.name,
+				"app_plan": self.app_plan.name,
+				"title": "Test Server",
+			}
+		)
+
+	def test_new_refuses_a_team_without_a_billing_address(self):
+		"""The New Server form checks this; a request sent past the form did not."""
+		self.team.db_set("billing_address", None)
+		frappe.set_user(self.team.user)
+
+		servers_before = frappe.db.count("Server", {"team": self.team.name})
+		with self.assertRaises(frappe.ValidationError) as caught:
+			self._new_server()
+
+		self.assertIn("billing details", str(caught.exception))
+		self.assertEqual(frappe.db.count("Server", {"team": self.team.name}), servers_before)
+
+	def test_new_refuses_a_team_with_neither_servers_enabled_nor_credits(self):
+		self.team.db_set({"servers_enabled": 0, "currency": "INR"})
+		frappe.set_user(self.team.user)
+
+		servers_before = frappe.db.count("Server", {"team": self.team.name})
+		with self.assertRaises(frappe.ValidationError) as caught:
+			self._new_server()
+
+		self.assertIn("worth of credits", str(caught.exception))
+		self.assertEqual(frappe.db.count("Server", {"team": self.team.name}), servers_before)
+
 	@patch.object(VirtualMachine, "provision", new=successful_provision)
 	@patch.object(VirtualMachine, "sync", new=successful_sync)
+	@patch.object(ResizeServerJob, "wait_for_virtual_machine_to_stop", new=mock.Mock())
 	def test_change_plan_changes_plan_of_server_and_updates_subscription_doc(self):
 		create_test_virtual_machine_image(cluster=self.cluster, series="m")
 		create_test_virtual_machine_image(
@@ -259,10 +328,11 @@ class TestAPIServer(FrappeTestCase):
 			"Press Job", {"status": "Running"}, "status", "Success"
 		)  # Mark running jobs as success as extra steps we don't check
 
-		change_plan(
-			server.name,
-			app_plan_2.name,
-		)
+		with patch.object(VirtualMachine, "sync", new=successful_sync_with_memory(app_plan_2.memory)):
+			change_plan(
+				server.name,
+				app_plan_2.name,
+			)
 
 		server.reload()
 		app_subscription = frappe.get_doc(
@@ -359,3 +429,11 @@ class TestAPIServerList(FrappeTestCase):
 			all(server_filter={"server_type": "", "tag": "test_tag"}),
 			[self.app_server_dict],
 		)
+
+	def test_tag_ending_in_backslash_is_treated_as_a_value(self):
+		"""A trailing backslash used to escape the closing quote and made the rest of the query run as SQL."""
+		self.assertEqual(all(server_filter={"server_type": "", "tag": "test_tag\\"}), [])
+
+	def test_tag_carrying_a_union_payload_returns_no_servers(self):
+		payload = "test_tag\\' UNION SELECT name, name, name, creation, name FROM `tabTeam` -- "
+		self.assertEqual(all(server_filter={"server_type": "", "tag": payload}), [])

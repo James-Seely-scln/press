@@ -3,16 +3,47 @@
 		<Tooltip text="All Roles">
 			<Button :route="{ name: 'SettingsPermissionRoles' }">
 				<template #icon>
-					<lucide-arrow-left class="h-4 w-4 text-gray-700" />
+					<lucide-arrow-left class="h-4 w-4 text-ink-gray-7" />
 				</template>
 			</Button>
 		</Tooltip>
-		<h3 class="text-lg font-medium text-gray-900">
+		<h3 class="text-lg font-medium text-ink-gray-9 mr-auto">
 			{{ role.doc?.title }}
 		</h3>
 		<Tooltip text="Admin Role" v-if="role.doc?.admin_access">
-			<FeatherIcon name="shield" class="h-5 w-5 text-gray-700" />
+			<FeatherIcon name="shield" class="h-5 w-5 text-ink-gray-7" />
 		</Tooltip>
+
+		<Button
+			v-if="session.userPermissions.data.owner || session.isTeamAdmin"
+			label="Delete"
+			icon-left="trash-2"
+			theme="red"
+			variant="subtle"
+			@click="
+				confirmDialog({
+					title: 'Delete',
+					message: 'Are you sure you want to delete this role?',
+					primaryAction: {
+						label: 'Delete',
+						theme: 'red',
+						onClick: ({ hide }) => {
+							role.delete
+								.submit()
+								.then(() => {
+									hide();
+									$router.push({
+										name: 'SettingsPermissionRoles',
+									});
+								})
+								.catch((e) => {
+									toast.error(getToastErrorMessage(e));
+								});
+						},
+					},
+				})
+			"
+		/>
 	</div>
 	<div class="flex items-center justify-between mb-5">
 		<TabButtons
@@ -32,28 +63,6 @@
 					value: 'permissions',
 				},
 			]"
-		/>
-		<Button
-			label="Delete"
-			icon-left="trash-2"
-			theme="red"
-			variant="subtle"
-			@click="
-				confirmDialog({
-					title: 'Delete',
-					message: 'Are you sure you want to delete this role?',
-					primaryAction: {
-						label: 'Delete',
-						theme: 'red',
-						onClick: ({ hide }) => {
-							role.delete.submit().then(() => {
-								hide();
-								$router.push({ name: 'SettingsPermissionRoles' });
-							});
-						},
-					},
-				})
-			"
 		/>
 	</div>
 	<RoleMembers
@@ -77,27 +86,23 @@
 	<RoleResources
 		v-else-if="tab === 'resources'"
 		:resources="role.doc?.resources"
-		@include="
-			(document_type, document_name) => {
-				role.add_resource.submit({
-					document_type,
-					document_name,
-				});
-			}
-		"
-		@remove="
-			(document_type, document_name) => {
+		:include="(resources) => role.add_resource.submit(resources)"
+		:remove="
+			(document_type, document_name) =>
 				role.remove_resource.submit({
 					document_type,
 					document_name,
-				});
-			}
+				})
 		"
 	/>
 	<RolePermissions
 		v-else-if="tab === 'permissions'"
 		:admin_access="role.doc?.admin_access"
+		:all_servers="role.doc?.all_servers"
+		:all_sites="role.doc?.all_sites"
+		:all_release_groups="role.doc?.all_release_groups"
 		:allow_bench_creation="role.doc?.allow_bench_creation"
+		:allow_apps="role.doc?.allow_apps"
 		:allow_billing="role.doc?.allow_billing"
 		:allow_partner="role.doc?.allow_partner"
 		:allow_server_creation="role.doc?.allow_server_creation"
@@ -107,6 +112,7 @@
 		:allow_customer="role.doc?.allow_customer"
 		:allow_leads="role.doc?.allow_leads"
 		:allow_contribution="role.doc?.allow_contribution"
+		:allow_local_payment="role.doc?.allow_local_payment"
 		:disabled="user != team.doc?.user"
 		@update="
 			(key: string, value: boolean) => {
@@ -119,22 +125,24 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue';
-import { Button, TabButtons, createDocumentResource } from 'frappe-ui';
-import RoleMembers from './RoleMembers.vue';
-import RolePermissions from './RolePermissions.vue';
-import RoleResources from './RoleResources.vue';
-import { getTeam } from '../../data/team';
-import { getSessionUser } from '../../data/session';
-import { confirmDialog, renderDialog } from '../../utils/components';
+import { Button, createDocumentResource, TabButtons } from 'frappe-ui'
+import { ref } from 'vue'
+import { toast } from 'vue-sonner'
+import { getSessionUser, session } from '../../data/session'
+import { getTeam } from '../../data/team'
+import { confirmDialog } from '../../utils/components'
+import { getToastErrorMessage } from '../../utils/toast'
+import RoleMembers from './RoleMembers.vue'
+import RolePermissions from './RolePermissions.vue'
+import RoleResources from './RoleResources.vue'
 
 const props = defineProps<{
-	id: string;
-}>();
+	id: string
+}>()
 
-const team = getTeam();
-const user = getSessionUser();
-const tab = ref<'members' | 'resources' | 'permissions'>('members');
+const team = getTeam()
+const user = getSessionUser()
+const tab = ref<'members' | 'resources' | 'permissions'>('members')
 
 const role = createDocumentResource({
 	doctype: 'Press Role',
@@ -146,5 +154,5 @@ const role = createDocumentResource({
 		add_resource: 'add_resource',
 		remove_resource: 'remove_resource',
 	},
-});
+})
 </script>
