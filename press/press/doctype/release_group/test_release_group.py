@@ -29,6 +29,16 @@ if typing.TYPE_CHECKING:
 	from press.press.doctype.app.app import App
 
 
+# change_app_branch() reads frappe/__init__.py off GitHub to compare major versions.
+# Test sources point at frappe/erpnext, which has no such file, so the call 404s — and
+# tests shouldn't reach the network anyway. 14 matches create_test_release_group's
+# default frappe_version.
+mock_frappe_branch_major_version = patch(
+	"press.press.doctype.release_group.release_group.get_frappe_branch_major_version",
+	new=Mock(return_value=14),
+)
+
+
 def mock_free_space(space_required: int):
 	def wrapper(*args, **kwargs):
 		return space_required
@@ -49,6 +59,8 @@ def create_test_release_group(
 	public=False,
 	frappe_version="Version 14",
 	servers: list[str] | None = None,
+	build_server: str | None = None,
+	app_sources: list[str] | None = None,
 ) -> ReleaseGroup:
 	"""
 	Create Release Group doc.
@@ -64,11 +76,15 @@ def create_test_release_group(
 			"title": f"Test ReleaseGroup {frappe.generate_hash(length=10)}",
 			"team": frappe.get_value("Team", {"user": user}, "name"),
 			"public": public,
+			"build_server": build_server,
 		}
 	)
-	for app in apps:
-		app_source = create_test_app_source(release_group.version, app)
-		release_group.append("apps", {"app": app.name, "source": app_source.name})
+
+	if not app_sources:
+		app_sources = [create_test_app_source(release_group.version, app).name for app in apps]
+
+	for idx, app in enumerate(apps):
+		release_group.append("apps", {"app": app.name, "source": app_sources[idx]})
 
 	if servers:
 		for server in servers:
@@ -92,7 +108,10 @@ class TestReleaseGroup(FrappeTestCase):
 	def test_create_release_group(self):
 		app = create_test_app("frappe", "Frappe Framework")
 		source = app.add_source(
-			"Version 12", "https://github.com/frappe/frappe", "version-12", team=self.team
+			frappe_version="Version 12",
+			repository_url="https://github.com/frappe/frappe",
+			branch="version-12",
+			team=self.team,
 		)
 		group = new_release_group(
 			"Test Group",
@@ -105,11 +124,17 @@ class TestReleaseGroup(FrappeTestCase):
 	def test_create_release_group_set_app_from_source(self):
 		app1 = create_test_app("frappe", "Frappe Framework")
 		source1 = app1.add_source(
-			"Version 12", "https://github.com/frappe/frappe", "version-12", team=self.team
+			frappe_version="Version 12",
+			repository_url="https://github.com/frappe/frappe",
+			branch="version-12",
+			team=self.team,
 		)
 		app2 = create_test_app("erpnext", "ERPNext")
 		source2 = app2.add_source(
-			"Version 12", "https://github.com/frappe/erpnext", "version-12", team=self.team
+			frappe_version="Version 12",
+			repository_url="https://github.com/frappe/erpnext",
+			branch="version-12",
+			team=self.team,
 		)
 		group = new_release_group(
 			"Test Group",
@@ -122,7 +147,10 @@ class TestReleaseGroup(FrappeTestCase):
 	def test_create_release_group_fail_when_first_app_is_not_frappe(self):
 		app = create_test_app("erpnext", "ERPNext")
 		source = app.add_source(
-			"Version 12", "https://github.com/frappe/erpnext", "version-12", team=self.team
+			frappe_version="Version 12",
+			repository_url="https://github.com/frappe/erpnext",
+			branch="version-12",
+			team=self.team,
 		)
 		self.assertRaises(
 			frappe.ValidationError,
@@ -136,7 +164,10 @@ class TestReleaseGroup(FrappeTestCase):
 	def test_create_release_group_fail_when_duplicate_apps(self):
 		app = create_test_app("frappe", "Frappe Framework")
 		source = app.add_source(
-			"Version 12", "https://github.com/frappe/frappe", "version-12", team=self.team
+			frappe_version="Version 12",
+			repository_url="https://github.com/frappe/frappe",
+			branch="version-12",
+			team=self.team,
 		)
 		self.assertRaises(
 			frappe.ValidationError,
@@ -150,24 +181,83 @@ class TestReleaseGroup(FrappeTestCase):
 			team=self.team,
 		)
 
-	def test_create_release_group_fail_when_version_mismatch(self):
+	def test_create_release_group_allows_version_mismatch(self):
+		# Compatibility is enforced on deploy, not on save — see
+		# test_deploy_fails_when_app_incompatible_with_bench_version.
 		app = create_test_app("frappe", "Frappe Framework")
 		source = app.add_source(
-			"Version 12", "https://github.com/frappe/frappe", "version-12", team=self.team
+			frappe_version="Version 12",
+			repository_url="https://github.com/frappe/frappe",
+			branch="version-12",
+			team=self.team,
 		)
-		self.assertRaises(
-			frappe.ValidationError,
-			new_release_group,
+		group = new_release_group(
 			"Test Group",
 			"Version 13",
 			[{"app": source.app, "source": source.name}],
 			team=self.team,
 		)
+		self.assertEqual(group.version, "Version 13")
+
+	def test_editing_group_with_incompatible_app_is_allowed(self):
+		"""Compatibility is checked on deploy, not on save.
+
+		Blocking saves meant two incompatible apps deadlocked editing (the UI
+		changes one app at a time), so the group must save even with an
+		incompatible app present.
+		"""
+		frappe_app = create_test_app("frappe", "Frappe Framework")
+		erpnext_app = create_test_app("erpnext", "ERPNext")
+		group = create_test_release_group([frappe_app, erpnext_app], frappe_version="Version 14")
+
+		frappe.db.delete("App Source Version", {"parent": group.apps[1].source, "version": group.version})
+
+		group.reload()
+		group.title = "Renamed Group"
+		group.save()  # must not raise despite erpnext being incompatible
+
+	def test_deploy_fails_when_app_incompatible_with_bench_version(self):
+		"""An app whose source is no longer compatible with the bench version must
+		block deploy."""
+		frappe_app = create_test_app("frappe", "Frappe Framework")
+		group = create_test_release_group([frappe_app], frappe_version="Version 14")
+
+		frappe.db.delete("App Source Version", {"parent": group.apps[0].source, "version": group.version})
+
+		group.reload()
+		with self.assertRaises(frappe.ValidationError):
+			group.create_deploy_candidate()
+
+	def test_deploy_ignores_incompatible_source_carried_over_from_bench(self):
+		"""A stale source on the deployed bench must not block deploy when the
+		group has already moved the app to a compatible source."""
+		from press.press.doctype.site.test_site import create_test_bench
+
+		frappe_app = create_test_app("frappe", "Frappe Framework")
+		payments_app = create_test_app("payments", "Payments")
+		group = create_test_release_group([frappe_app, payments_app], frappe_version="Version 14")
+		bench = create_test_bench(group=group)
+
+		bench_app = find(bench.apps, lambda x: x.app == "payments")
+		stale_source = frappe.copy_doc(frappe.get_doc("App Source", bench_app.source))
+		stale_source.branch = "develop"
+		stale_source.versions = []
+		stale_source.append("versions", {"version": "Version 13"})
+		with patch.object(AppSource, "after_insert", new=Mock()):
+			stale_source.insert()
+		frappe.db.set_value("Bench App", bench_app.name, "source", stale_source.name)
+
+		group.reload()
+		# Only frappe is being updated, so payments carries its source over from the bench
+		group.create_deploy_candidate([{"app": "frappe"}])  # must not raise
 
 	def test_create_release_group_fail_with_duplicate_titles(self):
 		app = create_test_app("frappe", "Frappe Framework")
 		source = app.add_source(
-			"Version 12", "https://github.com/frappe/frappe", "version-12", team=self.team
+			frappe_version="Version 12",
+			repository_url="https://github.com/frappe/frappe",
+			branch="version-12",
+			team=self.team,
 		)
 		new_release_group(
 			"Test Group",
@@ -190,6 +280,8 @@ class TestReleaseGroup(FrappeTestCase):
 		with self.assertRaises(frappe.ValidationError):
 			rg.change_app_branch("frappe", "master")
 
+	@mock_frappe_branch_major_version
+	@patch.object(AppSource, "sync_versions", new=Mock())
 	def test_branch_change_app_source_exists(self):
 		app = create_test_app()
 		rg = create_test_release_group([app])
@@ -208,6 +300,8 @@ class TestReleaseGroup(FrappeTestCase):
 		# Source must be set to the available `app_source` for `app`
 		self.assertEqual(rg.apps[0].source, app_source.name)
 
+	@mock_frappe_branch_major_version
+	@patch.object(AppSource, "sync_versions", new=Mock())
 	def test_branch_change_app_source_does_not_exist(self):
 		app = create_test_app()
 		rg = create_test_release_group([app])
@@ -221,6 +315,43 @@ class TestReleaseGroup(FrappeTestCase):
 		self.assertEqual(new_app_source.versions[0].version, previous_app_source.versions[0].version)
 		self.assertEqual(new_app_source.repository_url, previous_app_source.repository_url)
 		self.assertEqual(new_app_source.app, app.name)
+
+	@patch.object(AppSource, "sync_versions", autospec=True)
+	def test_branch_change_syncs_versions_for_non_public_source(self, mock_sync_versions):
+		app = create_test_app("erpnext", "ERPNext")
+		rg = create_test_release_group([create_test_app(), app])
+
+		current_app_source = frappe.get_doc("App Source", rg.apps[1].source)
+		app_source = create_test_app_source(
+			current_app_source.versions[0].version,
+			app,
+			current_app_source.repository_url,
+			"develop",
+		)
+
+		rg.change_app_branch(app.name, "develop")
+
+		self.assertEqual(mock_sync_versions.call_count, 1)
+		self.assertEqual(mock_sync_versions.call_args.args[0].name, app_source.name)
+
+	@patch.object(AppSource, "sync_versions", autospec=True)
+	def test_branch_change_does_not_sync_versions_for_public_source(self, mock_sync_versions):
+		app = create_test_app("erpnext", "ERPNext")
+		rg = create_test_release_group([create_test_app(), app])
+
+		current_app_source = frappe.get_doc("App Source", rg.apps[1].source)
+		public_app_source = create_test_app_source(
+			current_app_source.versions[0].version,
+			app,
+			current_app_source.repository_url,
+			"develop",
+		)
+		public_app_source.public = 1
+		public_app_source.save()
+
+		rg.change_app_branch(app.name, "develop")
+
+		mock_sync_versions.assert_not_called()
 
 	def test_new_release_group_loaded_with_correct_dependencies(self):
 		app = create_test_app("frappe", "Frappe Framework")
@@ -467,10 +598,16 @@ class TestReleaseGroup(FrappeTestCase):
 		f2_server.save()
 
 		rg = create_test_release_group([create_test_app()], servers=[f1_server.name])
+		frappe.db.savepoint("release_group_setup")
 
 		with self.assertRaises(frappe.ValidationError):
 			# No previous builds present
 			rg.add_server(f2_server.name, True)
+
+		frappe.db.rollback(
+			save_point="release_group_setup"
+		)  # to simulate different request/transaction after error
+		rg.reload()
 
 		create_build_and_succeed(rg)
 

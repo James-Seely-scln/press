@@ -15,7 +15,7 @@ import semantic_version as sv
 import tomli
 from frappe.model.document import Document
 
-from press.api.github import get_access_token
+from press.api.github import GithubFetchError, get_access_token
 from press.press.doctype.app_source.app_source import AppSource
 from press.utils import log_error
 
@@ -61,7 +61,7 @@ class AppRelease(Document):
 		output: DF.Code | None
 		public: DF.Check
 		source: DF.Link
-		status: DF.Literal["Draft", "Approved", "Awaiting Approval", "Rejected"]
+		status: DF.Literal["Draft", "Approved", "Awaiting Approval", "Rejected", "Yanked"]
 		team: DF.Link
 		timestamp: DF.Datetime | None
 	# end: auto-generated types
@@ -72,17 +72,8 @@ class AppRelease(Document):
 	def get_list_query(query, filters=None, **list_args):
 		app_release = frappe.qb.DocType("App Release")
 		release_approve_request = frappe.qb.DocType("App Release Approval Request")
+		marketplace_app_audit = frappe.qb.DocType("Marketplace App Audit")
 
-		# Subquery to get the latest screening_status for each app_release
-		latest_approval_request = (
-			frappe.qb.from_(release_approve_request)
-			.select(release_approve_request.screening_status)
-			.where(release_approve_request.app_release == app_release.name)
-			.orderby(release_approve_request.creation, order=frappe.qb.terms.Order.desc)
-			.limit(1)
-		)
-
-		# Subquery to get the latest name for each app_release
 		approval_request_name = (
 			frappe.qb.from_(release_approve_request)
 			.select(release_approve_request.name)
@@ -91,11 +82,18 @@ class AppRelease(Document):
 			.limit(1)
 		)
 
-		# Main query that selects app_release fields and the latest screening_status and name
+		latest_audit_result = (
+			frappe.qb.from_(marketplace_app_audit)
+			.select(marketplace_app_audit.audit_result)
+			.where(marketplace_app_audit.app_release == app_release.name)
+			.orderby(marketplace_app_audit.creation, order=frappe.qb.terms.Order.desc)
+			.limit(1)
+		)
+
 		query = query.select(
 			app_release.name,
-			latest_approval_request.as_("screening_status"),
 			approval_request_name.as_("approval_request_name"),
+			latest_audit_result.as_("audit_result"),
 		)
 
 		return query  # noqa
@@ -105,6 +103,8 @@ class AppRelease(Document):
 			self.set_clone_directory()
 
 	def before_save(self):
+		# We are approving any app with the name raven, could even be a custom app with the name raven or any featured apps
+		# Weird but not hurting anyone right now
 		apps = frappe.get_all("Featured App", {"parent": "Marketplace Settings"}, pluck="app")
 		teams = frappe.get_all("Auto Release Team", {"parent": "Marketplace Settings"}, pluck="team")
 		if self.team in teams or self.app in apps:
@@ -196,6 +196,9 @@ class AppRelease(Document):
 	def after_insert(self):
 		self.create_release_differences()
 		frappe.enqueue_doc(self.doctype, self.name, "auto_deploy", enqueue_after_commit=True)
+
+		# create a marketplace app audit for this release
+		self.create_marketplace_app_audit()
 
 	def get_source(self) -> AppSource:
 		"""Return the `App Source` associated with this `App Release`"""
@@ -313,7 +316,7 @@ class AppRelease(Document):
 		token = get_access_token(source.github_installation_id)
 		if token is None:
 			# Do not edit without updating deploy_notifications.py
-			raise Exception("App installation token could not be fetched", self.app)
+			raise GithubFetchError("App installation token could not be fetched", self.app)
 
 		return f"https://x-access-token:{token}@github.com/{source.repository_owner}/{source.repository}"
 
@@ -386,6 +389,35 @@ class AppRelease(Document):
 
 		finally:
 			frappe.set_user(current_user)
+
+	def create_marketplace_app_audit(self):
+		"""
+		Currently, we only audit marketplace app releases. Later we can extend this to custom apps as well.
+		"""
+		# determine whether the release's source is a marketplace app and only if it's published.
+		# for new apps which are not published yet, the audit will be triggered by creating marketplace app approval request.
+		if not frappe.db.exists("Marketplace App", {"app": self.app, "status": "Published"}):
+			return
+
+		marketplace_app, bypass_automated_audit = frappe.db.get_value(
+			"Marketplace App", {"app": self.app}, ["name", "bypass_automated_audit"]
+		)
+		if bypass_automated_audit:
+			return
+
+		is_registered_source = frappe.db.exists(
+			"Marketplace App Version",
+			{"parent": marketplace_app, "source": self.source},
+		)
+		if not is_registered_source:
+			return
+
+		from press.marketplace.doctype.marketplace_app_audit.marketplace_app_audit import MarketplaceAppAudit
+
+		MarketplaceAppAudit.create_for_release(
+			marketplace_app=marketplace_app,
+			app_release=self.name,
+		)
 
 
 def cleanup_unused_releases():
@@ -594,6 +626,10 @@ def get_python_path(dirpath: str) -> str:
 			if requires_python:
 				version_spec = sv.SimpleSpec(requires_python)
 				if version_spec.match(sv.Version("3.14.0")):
+					# try to resolve python3.14 path
+					python_path = shutil.which("python3.14")
+					if python_path:
+						return python_path
 					return "/usr/bin/python3.14"  # Temporary hardcoding until python 3.14 until we move to build server
 
 	return _get_python_path()

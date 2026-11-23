@@ -1,6 +1,7 @@
-import { createRouter, createWebHistory } from 'vue-router';
-import { getTeam } from './data/team';
-import generateRoutes from './objects/generateRoutes';
+import { createRouter, createWebHistory } from 'vue-router'
+import session from './data/session'
+import { getTeam } from './data/team'
+import generateRoutes from './objects/generateRoutes'
 
 let router = createRouter({
 	history: createWebHistory('/dashboard/'),
@@ -13,15 +14,22 @@ let router = createRouter({
 				next({
 					name: 'Welcome',
 					query: {
+						...to.query,
 						is_redirect: true,
 					},
-				});
+				})
 			},
 		},
 		{
 			path: '/welcome',
 			name: 'Welcome',
 			component: () => import('./pages/Welcome.vue'),
+			meta: { hideSidebar: true },
+		},
+		{
+			path: '/quickstart',
+			name: 'Quickstart',
+			component: () => import('./pages/Quickstart.vue'),
 			meta: { hideSidebar: true },
 		},
 		{
@@ -97,6 +105,13 @@ let router = createRouter({
 		{
 			name: 'Release Group New Site',
 			path: '/groups/:bench/sites/new',
+			component: () => import('./pages/NewSite.vue'),
+			props: true,
+		},
+
+		{
+			name: 'Server New Site',
+			path: '/servers/:server/sites/new',
 			component: () => import('./pages/NewSite.vue'),
 			props: true,
 		},
@@ -185,9 +200,24 @@ let router = createRouter({
 					component: () => import('./pages/BillingMarketplacePayouts.vue'),
 				},
 				{
+					name: 'BillingSubscriptions',
+					path: 'subscriptions',
+					component: () => import('./pages/BillingSubscriptions.vue'),
+				},
+				{
+					name: 'BillingTiers',
+					path: 'tiers',
+					component: () => import('./pages/BillingTiers.vue'),
+				},
+				{
 					name: 'BillingMpesaInvoices',
 					path: 'mpesa-invoices',
 					component: () => import('./pages/BillingMpesaInvoices.vue'),
+				},
+				{
+					name: 'BillingUPIAutopay',
+					path: 'upi-autopay',
+					component: () => import('./pages/BillingUPIAutopay.vue'),
 				},
 			],
 		},
@@ -233,6 +263,60 @@ let router = createRouter({
 							props: true,
 						},
 					],
+				},
+
+				{
+					name: 'SettingsPartnerAdmin',
+					path: 'partner-admin',
+					redirect: { name: 'PartnerList' },
+					component: () => import('./pages/PartnerAdmin.vue'),
+					children: [
+						{
+							name: 'PartnerList',
+							path: 'partner-list',
+							component: () => import('./pages/PartnerList.vue'),
+						},
+						{
+							name: 'CertificateList',
+							path: 'certificate-list',
+							component: () => import('./pages/PartnerAdminCertificates.vue'),
+						},
+						{
+							name: 'PartnerAdminLeads',
+							path: 'partner-admin-lead-list',
+							component: () => import('./pages/PartnerAdminLeads.vue'),
+						},
+						{
+							name: 'PartnerAdminResources',
+							path: 'admin-resources',
+							component: () =>
+								import('./components/partners/PartnerResources.vue'),
+						},
+						{
+							name: 'PartnerAdminAudits',
+							path: 'admin-audits',
+							component: () =>
+								import('./components/partners/PartnerAdminAudits.vue'),
+						},
+					],
+				},
+			],
+		},
+		{
+			name: 'Status Page',
+			path: '/status',
+			component: () => import('./pages/PrivateStatusPage.vue'),
+			redirect: { name: 'OngoingIncidents' },
+			children: [
+				{
+					name: 'OngoingIncidents',
+					path: 'ongoing-incidents',
+					component: () => import('./components/status/PrivateIncident.vue'),
+				},
+				{
+					name: 'IncidentHistory',
+					path: 'incident-history',
+					component: () => import('./components/status/PrivateIncident.vue'),
 				},
 			],
 		},
@@ -281,6 +365,26 @@ let router = createRouter({
 						import('./components/partners/PartnerContributionList.vue'),
 				},
 				{
+					name: 'PartnerAudits',
+					path: 'audits',
+					component: () => import('./components/partners/PartnerAudits.vue'),
+				},
+				{
+					name: 'PartnerNCList',
+					path: 'audit/:partner_audit?',
+					component: () => import('./components/partners/PartnerNCList.vue'),
+					props: true,
+					children: [
+						{
+							name: 'PartnerNCSummary',
+							path: 'nc-summary/:nc?',
+							props: true,
+							component: () =>
+								import('./components/partners/PartnerNCSummary.vue'),
+						},
+					],
+				},
+				{
 					name: 'LocalPaymentSetup',
 					path: 'local-payment-setup',
 					component: () =>
@@ -299,32 +403,9 @@ let router = createRouter({
 			],
 		},
 		{
-			name: 'Partner Admin',
-			path: '/partner-admin',
-			redirect: { name: 'PartnerList' },
-			component: () => import('./pages/PartnerAdmin.vue'),
-			children: [
-				{
-					name: 'PartnerList',
-					path: 'partner-list',
-					component: () => import('./pages/PartnerList.vue'),
-				},
-				{
-					name: 'CertificateList',
-					path: 'certificate-list',
-					component: () => import('./pages/PartnerAdminCertificates.vue'),
-				},
-				{
-					name: 'PartnerAdminLeads',
-					path: 'partner-admin-lead-list',
-					component: () => import('./pages/PartnerAdminLeads.vue'),
-				},
-				{
-					name: 'PartnerAdminResources',
-					path: 'admin-resources',
-					component: () => import('./components/partners/PartnerResources.vue'),
-				},
-			],
+			name: 'Partner Onboarding',
+			path: '/partner-onboarding',
+			component: () => import('@/onboarding/PartnerOnboarding.vue'),
 		},
 		{
 			name: 'Signup Create Site',
@@ -372,6 +453,12 @@ let router = createRouter({
 			props: true,
 		},
 		{
+			name: 'NewSiteProgress',
+			path: '/sites/new/progress/:siteGroupDeployName',
+			component: () => import('./pages/NewSiteProgress.vue'),
+			props: true,
+		},
+		{
 			path: '/developer-reply/:marketplaceApp/:reviewId',
 			name: 'ReplyMarketplaceApp',
 			component: () =>
@@ -386,7 +473,7 @@ let router = createRouter({
 		},
 		{
 			path: '/enable-bench-groups',
-			name: 'Enable Bench Groups',
+			name: 'Enable Benches',
 			component: () => import('./pages/EnableBenchGroups.vue'),
 		},
 		{
@@ -410,136 +497,211 @@ let router = createRouter({
 			component: () => import('./pages/devtools/log-browser/LogBrowser.vue'),
 			props: true,
 		},
-		{
-			path: '/backups/sites',
-			name: 'Site Backups',
-			component: () => import('./pages/backups/SiteBackups.vue'),
-			props: true,
-		},
-		{
-			path: '/backups/snapshots',
-			name: 'Snapshots',
-			component: () => import('./pages/backups/ServerSnapshots.vue'),
-			props: true,
-		},
 		...generateRoutes(),
+		// TODO: makeshift redirect fixes for /insights paths
+		{
+			path: '/sites/:site/insights/overview',
+			redirect: (to) => ({
+				path: `/sites/${to.params.site}/overview`,
+			}),
+		},
+		{
+			path: '/sites/:site/insights/apps',
+			redirect: (to) => ({
+				path: `/sites/${to.params.site}/apps`,
+			}),
+		},
+		{
+			path: '/sites/:site/insights/domains',
+			redirect: (to) => ({
+				path: `/sites/${to.params.site}/domains`,
+			}),
+		},
+		{
+			path: '/sites/:site/insights/backups',
+			redirect: (to) => ({
+				path: `/sites/${to.params.site}/backups`,
+			}),
+		},
+		{
+			path: '/sites/:site/insights/site-config',
+			redirect: (to) => ({
+				path: `/sites/${to.params.site}/site-config`,
+			}),
+		},
+		{
+			path: '/sites/:site/insights/actions',
+			redirect: (to) => ({
+				path: `/sites/${to.params.site}/actions`,
+			}),
+		},
+		{
+			path: '/sites/:site/insights/updates',
+			redirect: (to) => ({
+				path: `/sites/${to.params.site}/updates`,
+			}),
+		},
+		{
+			path: '/sites/:site/insights/activity',
+			redirect: (to) => ({
+				path: `/sites/${to.params.site}/activity`,
+			}),
+		},
 		{
 			path: '/:pathMatch(.*)*',
 			name: '404',
 			component: () => import('./pages/404.vue'),
 		},
 	],
-});
+})
 
 router.beforeEach(async (to, from, next) => {
 	let isLoggedIn =
 		document.cookie.includes('user_id') &&
-		!document.cookie.includes('user_id=Guest');
-	let goingToLoginPage = to.matched.some((record) => record.meta.isLoginPage);
+		!document.cookie.includes('user_id=Guest')
 
-	if (isLoggedIn) {
-		await waitUntilTeamLoaded();
-		let $team = getTeam();
-		let onboardingComplete = $team.doc.onboarding.complete;
-		let defaultRoute = 'Site List';
-		let onboardingRoute = 'Welcome';
+	let hasTeamPrivileges = !!window.default_team
+	let goingToLoginPage = to.matched.some((record) => record.meta.isLoginPage)
+
+	if (isLoggedIn && window.account_disabled) {
+		next(goingToLoginPage ? undefined : { name: 'Login' })
+		return
+	}
+
+	if (isLoggedIn && hasTeamPrivileges) {
+		await waitUntilTeamLoaded()
+		let $team = getTeam()
+		let onboardingComplete = $team.doc.onboarding.complete
+		let defaultRoute = 'Site List'
 
 		// identify user in posthog
 		if (window.posthog?.__loaded) {
 			try {
 				window.posthog.identify($team.doc.user, {
 					app: 'frappe_cloud',
-				});
+				})
 			} catch (e) {
-				console.error(e);
+				console.error(e)
 			}
 		}
 
 		// if team owner/admin enforce 2fa and user has not enabled 2fa, redirect to enable 2fa
-		const Enable2FARoute = 'Enable2FA';
+		const Enable2FARoute = 'Enable2FA'
 		if (
 			to.name !== Enable2FARoute &&
 			!$team.doc.is_desk_user &&
 			$team.doc.enforce_2fa &&
 			!$team.doc.user_info.is_2fa_enabled
 		) {
-			next({ name: Enable2FARoute });
-			return;
+			next({ name: Enable2FARoute })
+			return
 		}
 
 		// if team owner/admin doesn't enforce 2fa don't allow user to visit Enable2FA route
 		if (to.name === Enable2FARoute && !$team.doc.enforce_2fa) {
-			next({ name: defaultRoute });
-			return;
+			next({ name: defaultRoute })
+			return
+		}
+
+		// if team is not a partner and trying to access partner routes, redirect to partner onboarding
+		const activePartner = Boolean(
+			$team.doc.erpnext_partner && $team.doc.partner_status === 'Active',
+		)
+		const goingToPartnerDashboard = to.matched.some(
+			(record) => record.name === 'Partnership',
+		)
+
+		if (to.name === 'Partner Onboarding' && activePartner) {
+			next({ name: 'PartnerOverview' })
+			return
+		}
+
+		if (goingToPartnerDashboard && !activePartner) {
+			next({ name: 'Partner Onboarding' })
+			return
 		}
 
 		if (to.name.startsWith('Release Group')) {
 			if (!$team.doc.benches_enabled)
 				try {
-					await $team.setValue.submit({ benches_enabled: 1 });
+					await $team.setValue.submit({ benches_enabled: 1 })
 				} catch (e) {
-					console.warn('Auto-enable benches failed:', e);
+					console.warn('Auto-enable benches failed:', e)
 				}
 			if (!onboardingComplete) {
-				next({ name: 'Enable Bench Groups' });
-				return;
+				next({ name: 'Enable Benches' })
+				return
 			}
-		} else if (to.name === 'Enable Bench Groups' && onboardingComplete) {
-			next({ name: 'Release Group List' });
+		} else if (to.name === 'Enable Benches' && onboardingComplete) {
+			next({ name: 'Release Group List' })
 		}
 
 		if (to.name.startsWith('Server')) {
 			if (!$team.doc.servers_enabled)
 				try {
-					await $team.setValue.submit({ servers_enabled: 1 });
+					await $team.setValue.submit({ servers_enabled: 1 })
 				} catch (e) {
-					console.warn('Auto-enable servers failed:', e);
+					console.warn('Auto-enable servers failed:', e)
 				}
 			if (!onboardingComplete) {
-				next({ name: 'Enable Servers' });
-				return;
+				next({ name: 'Enable Servers' })
+				return
 			}
 		} else if (to.name === 'Enable Server' && onboardingComplete) {
-			next({ name: 'Server List' });
+			next({ name: 'Server List' })
 		}
 
 		if (goingToLoginPage) {
 			if (to.name == 'Signup' && to.query?.product) {
 				next({
-					name: 'SignupSetup',
-					params: { productId: to.query.product },
-				});
+					name: 'Quickstart',
+					query: { product: to.query.product },
+				})
+				return
 			}
 			if (to.name == 'Setup Account') {
-				next({ name: 'Team Invite', params: to.params });
+				next({ name: 'Team Invite', params: to.params })
+				return
 			}
-			next({ name: defaultRoute });
+			next({ name: defaultRoute })
 		} else {
-			next();
+			next()
 		}
 	} else {
 		if (goingToLoginPage) {
-			next();
+			next()
 		} else {
 			if (to.name == 'Site Login') {
-				next();
+				next()
+			} else if (!hasTeamPrivileges) {
+				logoutWithTeamError()
 			} else {
-				next({ name: 'Login', query: { redirect: to.href } });
+				next({ name: 'Login', query: { redirect: to.href } })
 			}
 		}
 	}
-});
+})
 
 function waitUntilTeamLoaded() {
 	return new Promise((resolve) => {
 		let interval = setInterval(() => {
-			let team = getTeam();
+			let team = getTeam()
 			if (team?.doc) {
-				clearInterval(interval);
-				resolve();
+				clearInterval(interval)
+				resolve()
+			} else if (team?.get?.error) {
+				if (team?.get?.error?.exc_type === 'ValidationError') {
+					clearInterval(interval)
+					logoutWithTeamError()
+				}
 			}
-		}, 100);
-	});
+		}, 100)
+	})
 }
 
-export default router;
+function logoutWithTeamError() {
+	session.logout.submit()
+	router.push({ name: 'Login', query: { reason: 'INVALID_TEAM' } })
+}
+
+export default router
